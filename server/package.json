@@ -1,0 +1,23 @@
+{
+  "name": "remouline-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Remouline backend: Gitea webhook receiver, correction worker pool and results API",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "api": "node src/api/server.js",
+    "webhook": "node src/webhook.js",
+    "worker": "node src/worker.js",
+    "setup-gitea": "node src/scripts/setup-gitea.js",
+    "test": "node --test test/unit.test.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "bullmq": "^6.3.8",
+    "express": "^5.1.0",
+    "ioredis": "^5.8.2"
+  }
+}

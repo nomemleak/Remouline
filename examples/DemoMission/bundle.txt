@@ -1,0 +1,117 @@
+===== FILE: Fundamentals/count_chars/test_count_chars.c =====
+// Fundamentals/count_chars/test_count_chars.c
+#include <criterion/criterion.h>
+#include <stdlib.h>
+#include <string.h>
+#include "count_chars.h"
+
+Test(count_chars, simple_string)
+{
+    int result = count_chars("hello", 'l');
+
+    cr_assert(result == 2, "Expected 2 but got %d for count_chars(\"hello\", 'l')", result);
+}
+
+Test(count_chars, null_string)
+{
+    int result = count_chars(NULL, 'a');
+
+    cr_assert(result == -1, "Expected -1 but got %d for a NULL string", result);
+}
+
+Test(count_chars, duplicate_is_independent)
+{
+    char *copy = duplicate_word("remouline");
+
+    cr_assert_not_null(copy, "duplicate_word returned NULL");
+    cr_assert_str_eq(copy, "remouline", "Expected \"remouline\" but got \"%s\"", copy);
+    free(copy);
+}
+===== FILE: Fundamentals/test_add_numbers.c =====
+// Fundamentals/test_add_numbers.c
+#include <criterion/criterion.h>
+#include <limits.h>
+#include "add_numbers.h"
+
+Test(add_numbers, positive_values)
+{
+    int result = add_numbers(2, 3);
+
+    cr_assert(result == 5, "Expected 5 but got %d", result);
+}
+
+Test(add_numbers, negative_values)
+{
+    int result = add_numbers(-4, -6);
+
+    cr_assert(result == -10, "Expected -10 but got %d", result);
+}
+
+Test(add_numbers, zero)
+{
+    int result = add_numbers(0, 0);
+
+    cr_assert(result == 0, "Expected 0 but got %d", result);
+}
+===== FILE: Programs/shout/test_shout.c =====
+// Programs/shout/test_shout.c
+// Mini-program exercise: the binary built by the student's Makefile is run
+// from the exercise folder (tests run with the exercise folder as working directory).
+#include <criterion/criterion.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/wait.h>
+
+static int run_program(const char *command, char *out, size_t size)
+{
+    FILE *pipe = popen(command, "r");
+    size_t len;
+
+    if (pipe == NULL)
+        return -1;
+    len = fread(out, 1, size - 1, pipe);
+    out[len] = '\0';
+    return WEXITSTATUS(pclose(pipe));
+}
+
+Test(shout, uppercases_argument)
+{
+    char out[256];
+    int code = run_program("./shout hello", out, sizeof(out));
+
+    cr_assert(code == 0, "Expected exit code 0 but got %d", code);
+    cr_assert_str_eq(out, "HELLO\n", "Expected \"HELLO\\n\" but got \"%s\"", out);
+}
+
+Test(shout, no_argument_fails)
+{
+    char out[256];
+    int code = run_program("./shout", out, sizeof(out));
+
+    cr_assert(code == 84, "Expected exit code 84 but got %d", code);
+}
+===== FILE: headers/Fundamentals/add_numbers.h =====
+#ifndef ADD_NUMBERS_H_
+    #define ADD_NUMBERS_H_
+
+int add_numbers(int a, int b);
+
+#endif /* ADD_NUMBERS_H_ */
+===== FILE: headers/Fundamentals/count_chars/count_chars.h =====
+#ifndef COUNT_CHARS_H_
+    #define COUNT_CHARS_H_
+
+int count_chars(const char *str, char c);
+char *duplicate_word(const char *word);
+
+#endif /* COUNT_CHARS_H_ */
+===== FILE: headers/Programs/shout/shout.h =====
+#ifndef SHOUT_H_
+    #define SHOUT_H_
+
+void shout(const char *text);
+
+#endif /* SHOUT_H_ */
+===== FILE: remouline/flags.txt =====
+default: -Wall -Wextra -Werror
+===== END =====

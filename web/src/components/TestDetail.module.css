@@ -1,0 +1,9 @@
+.diff { padding-left: 0; padding-right: 0; }
+.diff > div { padding: 0 var(--s-4); min-height: var(--t-code-lh); }
+.same { color: var(--c-text-muted); }
+.expected { background: var(--c-pass-muted); color: var(--c-pass); }
+.actual { background: var(--c-fail-muted); color: var(--c-fail); }
+.sign { display: inline-block; width: 2ch; user-select: none; }
+
+.failures { display: flex; flex-direction: column; gap: var(--s-4); }
+.raw { max-height: 560px; font-size: var(--t-caption-size); line-height: 18px; }

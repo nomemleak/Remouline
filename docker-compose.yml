@@ -1,0 +1,173 @@
+# Remouline - everything runs on one VM.
+#
+#   docker compose build                    # backend + dashboard images
+#   docker compose --profile build-only build runner   # correction image "remouline-runner"
+#   docker compose up -d
+#
+# Nothing is published on the VM's network interfaces: the only way in from the
+# Internet is cloudflared (outbound tunnel), which exposes exactly:
+#   - the dashboard (app.<domain>)
+#   - Git over HTTPS on Gitea (git.<domain>), and ONLY the three Git protocol paths:
+#     Gitea's web UI and API are never reachable from outside (see tunnel/config.yml.example).
+# The API, the webhook receiver, Redis and Gitea's web UI stay on the internal network.
+name: remouline
+
+x-logging: &logging
+  # Container logs are rotated: nothing grows forever.
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+x-backend: &backend
+  build: ./server
+  image: remouline-server
+  restart: unless-stopped
+  env_file: .env
+  volumes:
+    - ${REMOULINE_DATA:-/srv/remouline/data}:/data
+  depends_on:
+    - redis
+  networks: [internal]
+  logging: *logging
+
+services:
+  gitea:
+    image: gitea/gitea:1.24
+    restart: unless-stopped
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+      - GITEA__database__DB_TYPE=sqlite3
+      - GITEA__DEFAULT__APP_NAME=${APP_NAME:-Remouline}
+      - GITEA__server__DOMAIN=${GITEA_DOMAIN}
+      - GITEA__server__ROOT_URL=https://${GITEA_DOMAIN}/
+      - GITEA__server__HTTP_PORT=3000
+      - GITEA__server__DISABLE_SSH=true
+      - GITEA__server__OFFLINE_MODE=true
+      - GITEA__server__LANDING_PAGE=login
+      - GITEA__security__INSTALL_LOCK=true
+      - GITEA__other__SHOW_FOOTER_VERSION=false
+      - GITEA__other__SHOW_FOOTER_TEMPLATE_LOAD_TIME=false
+      - GITEA__other__SHOW_FOOTER_POWERED_BY=false
+      # Accounts: created only through Remouline (invitations), never by self sign-up.
+      - GITEA__service__DISABLE_REGISTRATION=true
+      - GITEA__service__REQUIRE_SIGNIN_VIEW=true
+      - GITEA__service__DEFAULT_KEEP_EMAIL_PRIVATE=true
+      # Users cannot see each other: every account is private, the user list is disabled.
+      - GITEA__service__DEFAULT_USER_VISIBILITY=private
+      - GITEA__service__ALLOWED_USER_VISIBILITY_MODES=private
+      - GITEA__service__DEFAULT_ALLOW_CREATE_ORGANIZATION=false
+      - GITEA__service_0X2E_explore__REQUIRE_SIGNIN_VIEW=true
+      - GITEA__service_0X2E_explore__DISABLE_USERS_PAGE=true
+      - GITEA__admin__DISABLE_REGULAR_ORG_CREATION=true
+      - GITEA__openid__ENABLE_OPENID_SIGNIN=false
+      - GITEA__openid__ENABLE_OPENID_SIGNUP=false
+      # Logins go through the dashboard (password checked against Gitea's API, internally).
+      - GITEA__oauth2__ENABLED=false
+      - GITEA__api__ENABLE_SWAGGER=false
+      # Push-to-create: the student's first push creates the repo automatically.
+      - GITEA__repository__ENABLE_PUSH_CREATE_USER=true
+      - GITEA__repository__DEFAULT_PUSH_CREATE_PRIVATE=true
+      - GITEA__repository__DEFAULT_PRIVATE=private
+      - GITEA__repository__DEFAULT_BRANCH=main
+      # The system webhook targets the internal "webhook" service.
+      - GITEA__webhook__ALLOWED_HOST_LIST=webhook
+      - GITEA__webhook__DELIVER_TIMEOUT=10
+      - GITEA__mailer__ENABLED=false
+      # Warnings only: no request log (and so no client address) is written.
+      - GITEA__log__LEVEL=Warn
+    volumes:
+      - ${GITEA_DATA:-/srv/remouline/gitea}:/data
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    # Web UI for the operator only, on the VM's loopback (reach it with an SSH tunnel).
+    ports:
+      - "127.0.0.1:${GITEA_LOCAL_PORT:-3000}:3000"
+    mem_limit: 512m
+    networks: [internal]
+    logging: *logging
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - ${REDIS_DATA:-/srv/remouline/redis}:/data
+    mem_limit: 192m
+    networks: [internal]
+    logging: *logging
+
+  api:
+    <<: *backend
+    command: ["node", "src/api/server.js"]
+    mem_limit: 256m
+
+  webhook:
+    <<: *backend
+    command: ["node", "src/webhook.js"]
+    mem_limit: 128m
+
+  worker:
+    <<: *backend
+    command: ["node", "src/worker.js"]
+    # The worker drives the HOST Docker daemon to start sandboxed correction containers.
+    # Job folders must have the SAME path on the host and in this container.
+    volumes:
+      - ${REMOULINE_DATA:-/srv/remouline/data}:/data
+      - ${JOBS_DIR:-/srv/remouline/jobs}:${JOBS_DIR:-/srv/remouline/jobs}
+      - /var/run/docker.sock:/var/run/docker.sock
+    mem_limit: 256m
+    # To scale out: `docker compose up -d --scale worker=2` (each runs WORKER_CONCURRENCY jobs).
+
+  # Student dashboard + admin panel (Next.js). Talks to the API over the internal network.
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_APP_NAME: ${APP_NAME:-Remouline}
+        NEXT_PUBLIC_TIMEZONE: ${TIMEZONE:-UTC}
+    image: remouline-web
+    restart: unless-stopped
+    environment:
+      - NEXTAUTH_URL=https://${APP_DOMAIN}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:?set NEXTAUTH_SECRET in .env}
+      - REMOULINE_API_URL=http://api:8080
+      - REMOULINE_API_TOKEN=${API_TOKEN}
+      - REMOULINE_ADMIN_API_TOKEN=${ADMIN_API_TOKEN}
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+      # Next.js may write its cache here; everything else is read-only.
+      - /app/.next/cache:size=64m,uid=1000,gid=1000
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      - api
+    mem_limit: 384m
+    networks: [internal]
+    logging: *logging
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "--config", "/etc/cloudflared/config.yml", "run"]
+    volumes:
+      - ./tunnel:/etc/cloudflared:ro
+    depends_on:
+      - gitea
+      - web
+    mem_limit: 128m
+    networks: [internal]
+    logging: *logging
+
+  # Build-only service for the correction image (never started by `up`).
+  runner:
+    build: ./runner
+    image: ${RUNNER_IMAGE:-remouline-runner}
+    profiles: ["build-only"]
+    network_mode: none
+
+networks:
+  internal:
+    driver: bridge

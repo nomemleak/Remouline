@@ -1,0 +1,17 @@
+# Cloudflare Tunnel configuration (locally-managed tunnel).
+# Copy to tunnel/config.yml and put the credentials JSON created by
+# `cloudflared tunnel create remouline` next to it as tunnel/credentials.json.
+tunnel: REPLACE_WITH_TUNNEL_UUID
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  # Gitea: Git over HTTPS ONLY (clone / push-to-create). Any other path of this
+  # hostname (web UI, API, login page...) falls through to the final 404 rule.
+  - hostname: git.example.com
+    path: ^/[^/]+/[^/]+\.git/(info/refs|git-upload-pack|git-receive-pack)$
+    service: http://gitea:3000
+  # Dashboard and admin panel
+  - hostname: app.example.com
+    service: http://web:3000
+  # Everything else is refused
+  - service: http_status:404

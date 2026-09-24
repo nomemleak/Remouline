@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: Server unit tests
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  web:
+    name: Dashboard typecheck and build
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+  pipeline:
+    name: Correction pipeline on the demo assignment
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gcc, Criterion and valgrind
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc make valgrind libcriterion-dev
+      - name: Correct code passes every test, broken code does not
+        run: |
+          for variant in correct broken; do
+            work="$RUNNER_TEMP/$variant"
+            mkdir -p "$work/out"
+            cp -r "examples/DemoMission/$variant" "$work/submission"
+            cp -r examples/DemoMission/tests "$work/tests"
+            echo '{"default_flags":["-Wall","-Wextra","-Werror"],"overrides":{}}' > "$work/config.json"
+            python3 runner/pipeline.py --work "$work" --slug DemoMission
+          done
+          python3 - <<'EOF'
+          import json, os
+          tmp = os.environ["RUNNER_TEMP"]
+          correct = json.load(open(f"{tmp}/correct/out/report.json"))["summary"]
+          broken = json.load(open(f"{tmp}/broken/out/report.json"))["summary"]
+          print("correct", correct, "broken", broken)
+          assert correct["passed"] == correct["total"] > 0, correct
+          assert broken["passed"] < broken["total"], broken
+          EOF
