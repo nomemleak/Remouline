@@ -12,7 +12,7 @@
     "webhook": "node src/webhook.js",
     "worker": "node src/worker.js",
     "setup-gitea": "node src/scripts/setup-gitea.js",
-    "test": "node --test test/unit.test.js"
+    "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
