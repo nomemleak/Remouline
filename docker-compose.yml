@@ -4,12 +4,16 @@
 #   docker compose --profile build-only build runner   # correction image "remouline-runner"
 #   docker compose up -d
 #
-# Nothing is published on the VM's network interfaces: the only way in from the
-# Internet is cloudflared (outbound tunnel), which exposes exactly:
-#   - the dashboard (app.<domain>)
-#   - Git over HTTPS on Gitea (git.<domain>), and ONLY the three Git protocol paths:
-#     Gitea's web UI and API are never reachable from outside (see tunnel/config.yml.example).
-# The API, the webhook receiver, Redis and Gitea's web UI stay on the internal network.
+# The only way in from the Internet is a Cloudflare Tunnel (outbound), which exposes exactly:
+#   - the dashboard (app.<domain>) -> web:3000
+#   - Git over HTTPS on Gitea (git.<domain>) -> gitea:3000, and ONLY the three Git protocol
+#     paths: Gitea's web UI and API are never reachable from outside.
+# Two ways to run the tunnel (docs/DEPLOYMENT.md, step 4):
+#   - here, with the "tunnel" profile (COMPOSE_PROFILES=tunnel in .env): nothing is published
+#     on the VM's network interfaces;
+#   - an existing cloudflared elsewhere on your network: set WEB_PUBLISH / GITEA_PUBLISH to the
+#     VM's address and only let the cloudflared host reach those two ports.
+# The API, the webhook receiver and Redis always stay on the internal network.
 name: remouline
 
 x-logging: &logging
@@ -83,9 +87,10 @@ services:
       - ${GITEA_DATA:-/srv/remouline/gitea}:/data
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
-    # Web UI for the operator only, on the VM's loopback (reach it with an SSH tunnel).
+    # Loopback by default (operator only, through an SSH tunnel). With an external
+    # cloudflared: the VM's address, reachable from the cloudflared host only.
     ports:
-      - "127.0.0.1:${GITEA_LOCAL_PORT:-3000}:3000"
+      - "${GITEA_PUBLISH:-127.0.0.1:3000}:3000"
     mem_limit: 512m
     networks: [internal]
     logging: *logging
@@ -148,12 +153,17 @@ services:
       - ALL
     depends_on:
       - api
+    # Loopback by default; with an external cloudflared, the VM's address (see GITEA_PUBLISH).
+    ports:
+      - "${WEB_PUBLISH:-127.0.0.1:3080}:3000"
     mem_limit: 384m
     networks: [internal]
     logging: *logging
 
+  # Only with COMPOSE_PROFILES=tunnel; skip it if a cloudflared already runs elsewhere.
   cloudflared:
     image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
     restart: unless-stopped
     command: ["tunnel", "--no-autoupdate", "--config", "/etc/cloudflared/config.yml", "run"]
     volumes:

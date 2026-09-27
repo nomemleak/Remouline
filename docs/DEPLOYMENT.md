@@ -112,7 +112,12 @@ your computer (`ssh -L 3000:127.0.0.1:3000 <vm>`, then `http://localhost:3000`).
 
 ## 4. Cloudflare Tunnel
 
-Install `cloudflared` on the VM (only to create the tunnel; it then runs in a container):
+Two options. Either way, only two hostnames are exposed, and on `git.` only the Git protocol.
+
+### Option A: a tunnel dedicated to this VM (default)
+
+Keep `COMPOSE_PROFILES=tunnel` in `.env`. Install `cloudflared` on the VM (only to create the
+tunnel; it then runs in a container):
 
 ```bash
 curl -fsSL -o /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
@@ -141,6 +146,38 @@ On the free plan, Cloudflare refuses request bodies over 100 MB: a single push c
 
 `tunnel/` stays on the VM and is never committed.
 
+### Option B: a cloudflared you already run elsewhere
+
+For example one `cloudflared` in a container or LXC that serves all your machines. In `.env`:
+
+```
+COMPOSE_PROFILES=
+WEB_PUBLISH=<vm-ip>:3080
+GITEA_PUBLISH=<vm-ip>:3001
+```
+
+In Cloudflare Zero Trust > Networks > Tunnels > your tunnel > Public hostnames:
+
+| Hostname | Path | Service |
+| --- | --- | --- |
+| `app.example.com` | (empty) | `http://<vm-ip>:3080` |
+| `git.example.com` | `^/[^/]+/[^/]+\.git/(info/refs\|git-upload-pack\|git-receive-pack)$` | `http://<vm-ip>:3001` |
+
+**Do not** add a rule for `git.example.com` without the path: that would expose Gitea's web UI.
+
+Then allow those two ports **only from the cloudflared host**. Docker-published ports bypass `ufw`,
+so filter before Docker: in your hypervisor's firewall (e.g. the Proxmox firewall of the VM), or
+with rules in the `DOCKER-USER` chain:
+
+```bash
+sudo iptables -I DOCKER-USER -p tcp -m conntrack --ctorigdstport 3080 ! -s <cloudflared-ip> -j DROP
+sudo iptables -I DOCKER-USER -p tcp -m conntrack --ctorigdstport 3001 ! -s <cloudflared-ip> -j DROP
+```
+
+(make them persistent, e.g. with `iptables-persistent`).
+
+### Cloudflare settings (both options)
+
 ## 5. Accounts and tokens
 
 **Service account** (a Gitea admin used only through its tokens, never to log in):
@@ -168,7 +205,7 @@ Start everything and create the system webhook:
 ```bash
 docker compose up -d
 docker compose run --rm api node src/scripts/setup-gitea.js
-docker compose ps          # gitea, redis, api, webhook, worker, web, cloudflared: Up
+docker compose ps          # gitea, redis, api, webhook, worker, web (+ cloudflared with option A): Up
 ```
 
 Checks from any computer:
@@ -240,7 +277,7 @@ notice). To restore: redo steps 1-4, put `remouline.db` and `assignments/` back 
 - **Logs**: `docker compose logs -f worker` (or `api`, `webhook`, `web`, `gitea`, `cloudflared`), or
   *Admin > Logs* (kept `LOG_RETENTION_DAYS`).
 - **Emergency pause**: *Admin > Settings > Pause the service*. Grading and invitations stop at once
-  and every page shows your message. For a complete stop: `docker compose stop cloudflared`.
+  and every page shows your message. For a complete stop: `docker compose stop web gitea` (nothing is reachable any more).
 - **Removal requests**: unpublish or delete the assignment (*Unpublish* / *Delete* on its page).
 - **Lost password**: *Admin > Students* (or *Maintainers*) > the account > *Password reset link*.
 - **More throughput**: raise `WORKER_CONCURRENCY` (keep `WORKER_CONCURRENCY × CONTAINER_CPUS` ≤ vCPUs)
