@@ -67,6 +67,8 @@ export const config = {
   containerMemory: env('CONTAINER_MEMORY', '256m'),
   containerCpus: env('CONTAINER_CPUS', '0.5'),
   containerPids: envInt('CONTAINER_PIDS', 64),
+  // Largest file a correction container may write (bytes).
+  containerFsizeBytes: envInt('CONTAINER_FSIZE_BYTES', 64 * 1024 * 1024),
 
   // Anti-spam: never blocks a user, only delays their jobs.
   maxRunningPerStudent: envInt('MAX_RUNNING_PER_STUDENT', 1),

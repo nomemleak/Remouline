@@ -63,6 +63,9 @@ function sandboxArgs(name) {
     `--memory-swap=${config.containerMemory}`,
     `--cpus=${config.containerCpus}`,
     `--pids-limit=${config.containerPids}`,
+    // No single file larger than CONTAINER_FSIZE (user code filling the job folder on the host).
+    '--ulimit', `fsize=${config.containerFsizeBytes}`,
+    '--ulimit', 'nofile=256:256',
     '--read-only',
     '--tmpfs', '/tmp:rw,exec,nosuid,size=64m',
     '-u', `${RUNNER_UID}:${RUNNER_GID}`,

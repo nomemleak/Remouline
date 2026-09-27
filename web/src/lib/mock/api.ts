@@ -69,7 +69,7 @@ Remouline is an independent, non-commercial service that automatically tests C c
 (Mock mode: the real default text is served by the API, see server/src/legal.js.)`,
   privacy: `# Privacy notice
 
-- Pushes, results and repositories: deleted after {{DATA_DAYS}} days without activity.
+- Pushes and results: deleted {{DATA_DAYS}} days after the push. Repositories: after {{DATA_DAYS}} days without a push.
 - Accounts: deleted after {{ACCOUNT_DAYS}} days without any login or push.
 
 (Mock mode: the real default text is served by the API, see server/src/legal.js.)`,

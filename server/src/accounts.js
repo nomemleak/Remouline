@@ -61,6 +61,10 @@ function recordFailure(key) {
   failures.set(key, [...recent(key), Date.now()]);
 }
 
+setInterval(() => {
+  for (const key of failures.keys()) recent(key);
+}, WINDOW_MS).unref();
+
 export async function login({ login: typed, password, clientIp }) {
   const name = String(typed ?? '').trim();
   const loginKey = `login:${name.toLowerCase()}`;

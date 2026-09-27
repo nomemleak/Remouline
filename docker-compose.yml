@@ -28,6 +28,8 @@ x-backend: &backend
     - redis
   networks: [internal]
   logging: *logging
+  security_opt:
+    - no-new-privileges:true
 
 services:
   gitea:
@@ -69,6 +71,8 @@ services:
       - GITEA__repository__DEFAULT_PUSH_CREATE_PRIVATE=true
       - GITEA__repository__DEFAULT_PRIVATE=private
       - GITEA__repository__DEFAULT_BRANCH=main
+      # Push-to-create cannot be used to create repositories without limit.
+      - GITEA__repository__MAX_CREATION_LIMIT=${MAX_REPOS_PER_USER:-30}
       # The system webhook targets the internal "webhook" service.
       - GITEA__webhook__ALLOWED_HOST_LIST=webhook
       - GITEA__webhook__DELIVER_TIMEOUT=10

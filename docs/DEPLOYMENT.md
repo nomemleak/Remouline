@@ -71,6 +71,16 @@ sudo chown -R 1000:1000 /srv/remouline/gitea
 cp .env.example .env && chmod 600 .env
 ```
 
+Give the job folder (where user code runs) its own small filesystem, so a program writing
+without end can only fill that one, never the VM's disk:
+
+```bash
+sudo fallocate -l 4G /srv/remouline/jobs.img
+sudo mkfs.ext4 -q /srv/remouline/jobs.img
+echo '/srv/remouline/jobs.img /srv/remouline/jobs ext4 loop,nodev,nosuid 0 0' | sudo tee -a /etc/fstab
+sudo mount /srv/remouline/jobs
+```
+
 Generate the secrets:
 
 ```bash
@@ -122,7 +132,12 @@ In the Cloudflare dashboard, for your domain:
 
 - **Security > Bots**: turn **Bot Fight Mode off** (it challenges `git` clients, which then fail
   without a clear message);
-- **SSL/TLS > Edge Certificates**: **Always Use HTTPS** on.
+- **SSL/TLS > Edge Certificates**: **Always Use HTTPS** on;
+- **Security > WAF > Rate limiting rules**: one rule on hostname `git.example.com`, counting requests
+  per IP whose response status is `401`, e.g. 20 per 10 seconds, then block. The dashboard limits
+  failed logins itself, but Git over HTTPS checks passwords directly in Gitea, which has no limit.
+
+On the free plan, Cloudflare refuses request bodies over 100 MB: a single push cannot be larger.
 
 `tunnel/` stays on the VM and is never committed.
 

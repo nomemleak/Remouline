@@ -33,7 +33,7 @@ export default async function SettingsPage() {
           Set in the server&apos;s <code>.env</code>, applied automatically every few hours:
         </p>
         <ul className="small" style={{ margin: 0, paddingLeft: 'var(--s-5)' }}>
-          <li>pushes, results and Git repositories without activity: <strong>{r.dataDays || 'never'}</strong>{r.dataDays ? ' days' : ''} (<code>DATA_RETENTION_DAYS</code>);</li>
+          <li>pushes and results (after the push) and Git repositories (without a push): <strong>{r.dataDays || 'never'}</strong>{r.dataDays ? ' days' : ''} (<code>DATA_RETENTION_DAYS</code>);</li>
           <li>student accounts without login or push: <strong>{r.accountDays || 'never'}</strong>{r.accountDays ? ' days' : ''} (<code>ACCOUNT_RETENTION_DAYS</code>);</li>
           <li>logs, used links, closed reports: <strong>{r.logDays || 'never'}</strong>{r.logDays ? ' days' : ''} (<code>LOG_RETENTION_DAYS</code>);</li>
           <li>encrypted backups: <strong>{r.backupDays}</strong> days (<code>BACKUP_RETENTION_DAYS</code>).</li>

@@ -1,5 +1,5 @@
 // Automatic deletion (privacy by default), run by the API process every few hours:
-//   - pushes and their results older than DATA_RETENTION_DAYS;
+//   - pushes and their results older than DATA_RETENTION_DAYS (by age);
 //   - Git repositories not updated for DATA_RETENTION_DAYS (Gitea);
 //   - student accounts without login or push for ACCOUNT_RETENTION_DAYS, with all their data;
 //   - activity/service logs, used or expired links and closed reports older than LOG_RETENTION_DAYS.

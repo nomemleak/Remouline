@@ -64,7 +64,7 @@ Everything is stored on the operator's own server. Traffic goes through Cloudfla
 
 ## How long
 
-- Pushes, results and repositories: deleted after {{DATA_DAYS}} days without activity.
+- Pushes and their results: deleted {{DATA_DAYS}} days after the push. Repositories: deleted after {{DATA_DAYS}} days without a push.
 - Accounts: deleted with all their data after {{ACCOUNT_DAYS}} days without any login or push.
 - Technical logs: {{LOG_DAYS}} days.
 - Deleted data can remain in encrypted backups for up to {{BACKUP_DAYS}} days.

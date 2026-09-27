@@ -256,7 +256,7 @@ Each assignment has **its own** flags, used for user code (never for test files)
   token and re-check the role on every request.
 - **Privacy by default** (GDPR-minded):
   - email optional;
-  - pushes, results and repositories deleted after `DATA_RETENTION_DAYS` of inactivity;
+  - pushes and results deleted `DATA_RETENTION_DAYS` after the push, repositories after `DATA_RETENTION_DAYS` without a push;
   - inactive accounts deleted after `ACCOUNT_RETENTION_DAYS`;
   - logs kept `LOG_RETENTION_DAYS`, without client addresses;
   - encrypted backups only;
