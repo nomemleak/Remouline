@@ -75,7 +75,7 @@ default: -std=c99 -pedantic -Wall -Wextra -Werror
 ```
 
 Text outside the markers is ignored, and so are Markdown code fences (```` ``` ````) around the
-document, so a bundle can be pasted from a chat or an issue as-is.
+document, so a bundle can be copied from a message or an issue as-is.
 
 Also accepted:
 
