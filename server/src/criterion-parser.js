@@ -4,23 +4,77 @@
 const TEST_RE = /\bTest\s*\(\s*([A-Za-z_]\w*)\s*,\s*([A-Za-z_]\w*)/g;
 const PARAM_TEST_RE = /\b(?:ParameterizedTest|Theory)\s*\(\s*(?:\([^)]*\)|[^,]+?)\s*,\s*([A-Za-z_]\w*)\s*,\s*([A-Za-z_]\w*)/g;
 
-// Comments and preprocessor lines (with their "\" continuations) are ignored, so a helper
-// macro such as "#define TIMED(suite, name) Test(suite, name, .timeout = 2)" is not a test.
+const DEFINE_RE = /^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)\(([^)]*)\)((?:[^\n]*\\\r?\n)*[^\n]*)/gm;
+const PREPROCESSOR_RE = /^[ \t]*#(?:[^\n]*\\\r?\n)*[^\n]*/gm;
+const IDENT_RE = /^[A-Za-z_]\w*$/;
+
 function stripComments(source) {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/[^\n]*/g, '')
-    .replace(/^[ \t]*#(?:[^\n]*\\\r?\n)*[^\n]*/gm, '');
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 }
 
-export function findTests(source) {
-  const code = stripComments(source);
+/** All (suite, name) pairs matched by the Test / ParameterizedTest / Theory patterns. */
+function directTests(code) {
   const tests = [];
   for (const re of [TEST_RE, PARAM_TEST_RE]) {
     re.lastIndex = 0;
     let match;
+    while ((match = re.exec(code)) !== null) tests.push({ suite: match[1], name: match[2] });
+  }
+  return tests;
+}
+
+/** Helper macros wrapping a test: "#define TIMED(s, n) Test(s, n, .timeout = 2)" -> {TIMED, 0, 1}. */
+function wrapperMacros(code) {
+  const macros = [];
+  DEFINE_RE.lastIndex = 0;
+  let match;
+  while ((match = DEFINE_RE.exec(code)) !== null) {
+    const params = match[2].split(',').map((p) => p.trim());
+    for (const { suite, name } of directTests(match[3])) {
+      const suiteIndex = params.indexOf(suite);
+      const nameIndex = params.indexOf(name);
+      if (suiteIndex >= 0 && nameIndex >= 0) macros.push({ macro: match[1], suiteIndex, nameIndex });
+    }
+  }
+  return macros;
+}
+
+/** Top-level arguments of the call whose "(" is at `open`. */
+function callArguments(code, open) {
+  const args = [];
+  let depth = 0;
+  let current = '';
+  for (let i = open; i < code.length; i++) {
+    const c = code[i];
+    if (c === '(') {
+      if (depth++ > 0) current += c;
+    } else if (c === ')') {
+      if (--depth === 0) return [...args, current.trim()];
+      current += c;
+    } else if (c === ',' && depth === 1) {
+      args.push(current.trim());
+      current = '';
+    } else {
+      current += c;
+    }
+  }
+  return null;
+}
+
+// Comments and preprocessor lines are ignored (a helper macro's own body is not a test);
+// tests written through such a helper macro are found from its calls.
+export function findTests(source) {
+  const withDefines = stripComments(source);
+  const code = withDefines.replace(PREPROCESSOR_RE, '');
+  const tests = directTests(code);
+  for (const { macro, suiteIndex, nameIndex } of wrapperMacros(withDefines)) {
+    const re = new RegExp(`\\b${macro}\\s*\\(`, 'g');
+    let match;
     while ((match = re.exec(code)) !== null) {
-      tests.push({ suite: match[1], name: match[2] });
+      const args = callArguments(code, match.index + match[0].length - 1);
+      const suite = args?.[suiteIndex];
+      const name = args?.[nameIndex];
+      if (suite && name && IDENT_RE.test(suite) && IDENT_RE.test(name)) tests.push({ suite, name });
     }
   }
   return tests;

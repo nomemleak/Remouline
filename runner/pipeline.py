@@ -141,17 +141,67 @@ def leaf(category_path, test_name, status, **fields):
 # ---------------------------------------------------------------------------
 # Test discovery + exercise mapping (keep identical to server/src/criterion-parser.js)
 # ---------------------------------------------------------------------------
+DEFINE_RE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)\(([^)]*)\)((?:[^\n]*\\\r?\n)*[^\n]*)", re.MULTILINE)
+PREPROCESSOR_RE = re.compile(r"^[ \t]*#(?:[^\n]*\\\r?\n)*[^\n]*", re.MULTILINE)
+IDENT_RE = re.compile(r"^[A-Za-z_]\w*$")
+
+
 def strip_comments(source):
-    """Comments and preprocessor lines (with their "\\" continuations) are ignored."""
     source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
-    source = re.sub(r"//[^\n]*", "", source)
-    return re.sub(r"^[ \t]*#(?:[^\n]*\\\r?\n)*[^\n]*", "", source, flags=re.MULTILINE)
+    return re.sub(r"//[^\n]*", "", source)
+
+
+def direct_tests(code):
+    found = [(m.group(1), m.group(2)) for m in TEST_RE.finditer(code)]
+    found += [(m.group(1), m.group(2)) for m in PARAM_TEST_RE.finditer(code)]
+    return found
+
+
+def wrapper_macros(code):
+    """Helper macros wrapping a test: "#define TIMED(s, n) Test(s, n, .timeout = 2)" -> (TIMED, 0, 1)."""
+    macros = []
+    for m in DEFINE_RE.finditer(code):
+        params = [p.strip() for p in m.group(2).split(",")]
+        for suite, name in direct_tests(m.group(3)):
+            if suite in params and name in params:
+                macros.append((m.group(1), params.index(suite), params.index(name)))
+    return macros
+
+
+def call_arguments(code, start):
+    """Top-level arguments of the call whose "(" is at `start`."""
+    args, depth, current = [], 0, ""
+    for c in code[start:]:
+        if c == "(":
+            if depth > 0:
+                current += c
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return args + [current.strip()]
+            current += c
+        elif c == "," and depth == 1:
+            args.append(current.strip())
+            current = ""
+        else:
+            current += c
+    return None
 
 
 def static_tests(source):
-    code = strip_comments(source)
-    found = [(m.group(1), m.group(2)) for m in TEST_RE.finditer(code)]
-    found += [(m.group(1), m.group(2)) for m in PARAM_TEST_RE.finditer(code)]
+    """Comments and preprocessor lines are ignored (a helper macro's own body is not a test);
+    tests written through such a helper macro are found from its calls."""
+    with_defines = strip_comments(source)
+    code = PREPROCESSOR_RE.sub("", with_defines)
+    found = direct_tests(code)
+    for macro, suite_index, name_index in wrapper_macros(with_defines):
+        for m in re.finditer(r"\b%s\s*\(" % macro, code):
+            args = call_arguments(code, m.end() - 1) or []
+            if max(suite_index, name_index) < len(args):
+                suite, name = args[suite_index], args[name_index]
+                if IDENT_RE.match(suite) and IDENT_RE.match(name):
+                    found.append((suite, name))
     return found
 
 

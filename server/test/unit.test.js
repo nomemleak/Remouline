@@ -19,11 +19,16 @@ test('findTests detects Test and ParameterizedTest, ignores comments', () => {
     ParameterizedTest(struct param *p, suite_b, params) {}
     #define TIMED(suite, name) \\
         Test(suite, name, .timeout = 2)
+    TIMED(physics, documented_example) {}
+    #define WITH_FILE(path, s, n) Test(s, n, .init = setup)
+    WITH_FILE("data/a.txt", records, count_lines) {}
   `;
   assert.deepEqual(findTests(src), [
     { suite: 'suite_a', name: 'first' },
     { suite: 'suite_a', name: 'second' },
     { suite: 'suite_b', name: 'params' },
+    { suite: 'physics', name: 'documented_example' },
+    { suite: 'records', name: 'count_lines' },
   ]);
 });
 
