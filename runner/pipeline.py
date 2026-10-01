@@ -302,6 +302,14 @@ class Builder:
                 break
         return dirs
 
+    def project_archives(self, unit):
+        """Precompiled libraries shipped with a project (e.g. lib/libfoo.a, given with the
+        assignment and committed by the student): linked after the student's code."""
+        if not unit.project:
+            return []
+        return [a for a in sorted(unit.exercise_dir.rglob("*.a"))
+                if not any(p.startswith(".") for p in a.relative_to(unit.exercise_dir).parts)]
+
     def project_sources(self, unit, with_main=False):
         """Every .c of a project folder, except test files (and main() unless asked)."""
         sources = []
@@ -396,7 +404,8 @@ class Builder:
             logs.append("No source file found in %s/." % unit.exercise_rel)
         for name in unit.binaries if sources else []:
             cmd = ["gcc", *flags, "-g", "-I", str(unit.exercise_dir), *self.shared_includes(unit),
-                   *[str(s) for s in sources], "-o", str(unit.exercise_dir / name), *self.link_flags(unit)]
+                   *[str(s) for s in sources], *[str(a) for a in self.project_archives(unit)],
+                   "-o", str(unit.exercise_dir / name), *self.link_flags(unit)]
             res = run(cmd, timeout=BUILD_TIMEOUT)
             shown = " ".join(str(s.relative_to(self.submission)) for s in sources)
             logs.append("$ gcc %s %s -o %s\n%s" % (" ".join(flags), shown, name, res["output"] or ""))
@@ -409,7 +418,8 @@ class Builder:
     def link(self, unit, objects, test_obj, variant):
         out = self.build_root / ("bin-%s-%s" % (re.sub(r"[^A-Za-z0-9]+", "_", unit.rel), variant))
         extra = ASAN_FLAGS if variant == "asan" else []
-        res = run(["gcc", *extra, *[str(o) for o in objects], str(test_obj), "-o", str(out), "-lcriterion",
+        archives = [str(a) for a in self.project_archives(unit)]
+        res = run(["gcc", *extra, *[str(o) for o in objects], str(test_obj), *archives, "-o", str(out), "-lcriterion",
                    *self.link_flags(unit)], timeout=BUILD_TIMEOUT)
         return res["code"] == 0, out, res["output"] or ""
 

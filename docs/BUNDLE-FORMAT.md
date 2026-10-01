@@ -39,7 +39,8 @@ headers/fundamentals/include/physics.h           headers users write in fundamen
 headers/fundamentals/include/records.h
 ```
 
-Every `.c` of the project is compiled and linked with the tests, except the file defining `main()`;
+Every `.c` of the project is compiled and linked with the tests, except the file defining `main()`,
+together with the precompiled libraries shipped in the project (`lib/*.a`);
 every folder holding headers is on the include path, and the tests run with the project folder as
 working directory (so `data/...` paths work). Validation builds one empty implementation for the
 whole project. Tests that run a program (`./name`) use the project's `Makefile` instead.
