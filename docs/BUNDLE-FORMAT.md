@@ -43,7 +43,8 @@ Every `.c` of the project is compiled and linked with the tests, except the file
 together with the precompiled libraries shipped in the project (`lib/*.a`);
 every folder holding headers is on the include path, and the tests run with the project folder as
 working directory (so `data/...` paths work). Validation builds one empty implementation for the
-whole project. Tests that run a program (`./name`) use the project's `Makefile` instead.
+whole project. If the assignment provides the project's `Makefile`, add `<project>: makefile` to the
+flags.
 
 ## Single document
 
@@ -87,16 +88,20 @@ Also accepted:
 ```
 default: -std=c99 -pedantic -Werror -Wall -Wextra -Wvla
 file_io: -pedantic -Werror -Wall -Wextra -Wvla
+fundamentals: makefile
 ```
 
 - `default:` the flags used to compile users' code (never the test files);
 - `<exercise>: <flags>` an exception for one exercise, matched by its folder name (`file_io`) or its
   path (`Fundamentals/file_io`);
+- `<folder>: makefile` the assignment provides or requires a Makefile for that folder: programs run
+  by the tests (`./name`) are built with `make`, and unit tests are compiled with the flags of the
+  compile commands `make -n` prints (`-I`, `-o`, `-l` and sanitizer options are handled by the
+  pipeline). **Without this line, a Makefile found in a submission is never run**;
 - `#` starts a comment. Flags that could redirect output or load code (`-o`, `-B`, `-fplugin`...)
   are refused. Libraries (`-l*`, `-pthread`) are passed at link time; `-lm` is always added.
 
 Without this file, the assignment uses `DEFAULT_COMPILE_FLAGS` and the admin panel flags it.
-Exercises with their own `Makefile` use their own flags.
 
 ## Writing good tests
 

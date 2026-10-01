@@ -200,8 +200,8 @@ fundamentals/test_physics.c                         -> project folder fundamenta
 
 - The exercise name is the file name without `test_` / `_test`. The result tree path is
   `Testsuite/<folders>/<exercise>/<Criterion suite>/<test name>`.
-- Tests that run `./name`: the folder's `Makefile` builds it (`make`), or without a Makefile every
-  `.c` of the folder is compiled into `name`. Otherwise → unit tests linked with the user's sources.
+- Tests that run `./name`: every `.c` of the folder is compiled into `name`, or `make` builds it when
+  the flags say `<folder>: makefile`. Otherwise → unit tests linked with the user's sources.
 - Project folders (`src/`, `include/`, often a `Makefile`) tested module by module: every `.c` of the
   project except `main()` is linked with each test file, along with the project's precompiled
   libraries (`lib/*.a`), with every header folder on the include path.
@@ -228,7 +228,8 @@ Each assignment has **its own** flags, used for user code (never for test files)
   fallback `DEFAULT_COMPILE_FLAGS` is used.
 - Libraries are passed at link time (`-l*`, `-pthread`, always `-lm`). Dangerous flags (`-o`, `-B`,
   `-fplugin`...) are refused.
-- Exercises with their own `Makefile` keep their own flags.
+- `<folder>: makefile` when the assignment provides a Makefile: programs are built with it and the
+  flags are read from it (`make -n`). Without that line, a submitted Makefile is never run.
 
 </details>
 

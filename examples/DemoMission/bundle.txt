@@ -114,4 +114,5 @@ void shout(const char *text);
 #endif /* SHOUT_H_ */
 ===== FILE: remouline/flags.txt =====
 default: -Wall -Wextra -Werror
+Programs/shout: makefile
 ===== END =====

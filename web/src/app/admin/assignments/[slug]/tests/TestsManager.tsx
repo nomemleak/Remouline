@@ -122,8 +122,9 @@ function CompilationFlags({ data, onSave, busy }: { data: AssignmentPayload; onS
       </div>
       <p className="small muted">
         Each assignment has its own flags, used to compile student code (not the test files). They normally come
-        from <code>remouline/flags.txt</code> in the bundle; edit them here only to check or fix them. Exercises
-        with a <code>Makefile</code> use their own flags.
+        from <code>remouline/flags.txt</code> in the bundle; edit them here only to check or fix them. When the
+        assignment provides a <code>Makefile</code> for a folder, write <code>folder: makefile</code>: programs are
+        built with it and the flags are read from it. Without that line, students&apos; Makefiles are never run.
       </p>
       {source === 'fallback' ? (
         <div className="notice small">
@@ -136,9 +137,9 @@ function CompilationFlags({ data, onSave, busy }: { data: AssignmentPayload; onS
         <input className="input mono" value={flags} onChange={(e) => setFlags(e.target.value)} />
       </label>
       <label className="field">
-        Exceptions, one per line: <code>exercise_folder: flags</code>
+        Exceptions, one per line: <code>exercise_folder: flags</code> or <code>folder: makefile</code>
         <textarea className="textarea" style={{ minHeight: 70 }} value={overrides} onChange={(e) => setOverrides(e.target.value)}
-          placeholder="file_io: -pedantic -Werror -Wall -Wextra -Wvla" />
+          placeholder={'file_io: -pedantic -Werror -Wall -Wextra -Wvla\nfundamentals: makefile'} />
       </label>
       <div className="row">
         <button type="button" className="btn" disabled={!changed || busy || !flags.trim()} onClick={() => onSave(flags, overrides)}>

@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -179,7 +180,7 @@ def binaries_used(test_source):
 class Unit:
     """One test file + the exercise it targets."""
 
-    def __init__(self, tests_root, submission, rel):
+    def __init__(self, tests_root, submission, rel, makefile_keys=()):
         self.rel = rel
         self.test_file = tests_root / rel
         self.parts = category_parts(rel)
@@ -207,12 +208,16 @@ class Unit:
             and not (self.exercise_dir / (self.exercise + ".c")).exists()
             and ((self.exercise_dir / "src").is_dir() or (self.exercise_dir / "include").is_dir())
         )
+        # The assignment says this folder is built with its Makefile ("<folder>: makefile" in
+        # its flags). Otherwise a Makefile found in the submission is never run.
+        self.uses_makefile = self.exercise_rel is not None and any(
+            key in makefile_keys for key in (self.exercise_rel, "/".join(self.parts), self.exercise))
         if self.exercise_dir is not None:
-            # makefile: the tests run "./binary" built by the student's Makefile; program: same
-            # without a Makefile (we compile the folder into it); functions: unit tests linked
-            # with the student's code (even when the folder has a Makefile).
+            # makefile: the tests run "./binary" built with the folder's Makefile; program: the
+            # tests run "./binary" that we compile from the folder; functions: unit tests linked
+            # with the student's code (with the Makefile's compilation flags when it is used).
             self.binaries = binaries_used(self.test_file.read_text(errors="replace"))
-            if self.binaries and (self.exercise_dir / "Makefile").exists():
+            if self.binaries and self.uses_makefile:
                 self.mode = "makefile"
             elif self.binaries:
                 self.mode = "program"
@@ -225,6 +230,44 @@ class Unit:
 # Build
 # ---------------------------------------------------------------------------
 INCLUDE_RE = re.compile(r'^\s*#\s*include\s*"([^"]+)"', re.MULTILINE)
+COMPILER_RE = re.compile(r"^(gcc|cc|clang|g\+\+|c\+\+)(-[0-9.]+)?$")
+# Options followed by a separate argument, and options the pipeline handles itself.
+TAKES_ARGUMENT = {"-o", "-I", "-L", "-MF", "-MT", "-MQ", "-include", "-isystem", "-iquote", "-x"}
+NOT_KEPT = ("-c", "-I", "-L", "-l", "-M", "-o", "-fsanitize", "-fno-sanitize", "-B", "-wrapper", "-fplugin",
+            "-specs", "-isystem", "-iquote", "-include")
+
+
+def read_makefile_flags(folder, rel):
+    """Flags used by the compile commands that `make -n` prints for this folder."""
+    if not (folder / "Makefile").exists() and not (folder / "makefile").exists():
+        return None, ("The assignment builds %s/ with its Makefile, but there is none: "
+                      "the assignment's default flags are used." % rel)
+    res = run(["make", "-n", "-B", "-C", str(folder)], timeout=BUILD_TIMEOUT)
+    flags, found = [], False
+    for line in (res["output"] or "").splitlines():
+        try:
+            tokens = shlex.split(line)
+        except ValueError:
+            continue
+        if not tokens or not COMPILER_RE.match(os.path.basename(tokens[0])):
+            continue
+        if not any(t.endswith(".c") for t in tokens):
+            continue
+        found = True
+        skip = False
+        for token in tokens[1:]:
+            if skip:
+                skip = False
+                continue
+            if token in TAKES_ARGUMENT:
+                skip = True
+                continue
+            if token.startswith("-") and not token.startswith(NOT_KEPT) and token not in flags:
+                flags.append(token)
+    if res["code"] != 0 or not found:
+        return None, ("Could not read the compilation flags from %s/Makefile (make -n): "
+                      "the assignment's default flags are used." % rel)
+    return flags, "Compilation flags read from %s/Makefile: %s" % (rel, " ".join(flags) or "(none)")
 
 
 class Builder:
@@ -244,11 +287,23 @@ class Builder:
         flags are dropped: the pipeline builds its own AddressSanitizer/UBSan variant, and the
         plain variant must stay uninstrumented for valgrind."""
         flags = self.default_flags
-        for key in (unit.exercise_rel, "/".join(unit.parts), unit.exercise):
-            if key in self.overrides:
-                flags = self.overrides[key]
-                break
+        from_makefile = self.makefile_flags(unit)[0] if unit.uses_makefile and unit.mode == "functions" else None
+        if from_makefile is not None:
+            flags = from_makefile
+        else:
+            for key in (unit.exercise_rel, "/".join(unit.parts), unit.exercise):
+                if key in self.overrides:
+                    flags = self.overrides[key]
+                    break
         return [f for f in flags if not f.startswith(("-fsanitize", "-fno-sanitize"))]
+
+    def makefile_flags(self, unit):
+        """Compilation flags of the folder's Makefile, read from `make -n` (nothing is built).
+        Returns (flags or None, note for the build log)."""
+        key = "flags:%s" % unit.exercise_dir
+        if key not in self.make_cache:
+            self.make_cache[key] = read_makefile_flags(unit.exercise_dir, unit.exercise_rel)
+        return self.make_cache[key]
 
     def linked_sources(self, unit, sources):
         """Sources of OTHER exercise folders this exercise includes a header from
@@ -455,6 +510,8 @@ class Builder:
             sources, problem = self.sources_for(unit)
             if problem:
                 return {"ok": False, "log": problem, "reason": problem}
+            if unit.uses_makefile:
+                logs.append(self.makefile_flags(unit)[1])
             linked = self.linked_sources(unit, sources)
             if linked:
                 logs.append("Also compiling code used from other exercises: %s"
@@ -676,10 +733,11 @@ def main():
     results = []
 
     test_files = sorted(str(p.relative_to(tests_root)).replace("\\", "/") for p in tests_root.rglob("*.c"))
-    units = [Unit(tests_root, submission, rel) for rel in test_files]
     # Compilation flags of the assignment (written by the worker, read before any student code runs).
     config_path = work / "config.json"
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
+    makefile_keys = set(config.get("makefile") or [])
+    units = [Unit(tests_root, submission, rel, makefile_keys) for rel in test_files]
     builder = Builder(submission, build_root, config, valgrind=not args.no_valgrind)
     build_leaves = {}
     test_leaves = []

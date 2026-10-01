@@ -172,3 +172,12 @@ test('project layout: one empty implementation for the whole project', () => {
   assert.deepEqual(voidFunctions, ['free_points']);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('flags: "makefile" marks folders built with their own Makefile', () => {
+  const parsed = parseFlagsFile('default: -Wall -Wextra\nfundamentals: makefile\nproficiencies: Makefile\nfile_io: -Wall');
+  assert.equal(parsed.overrides, 'fundamentals: makefile\nproficiencies: makefile\nfile_io: -Wall');
+  const cfg = pipelineConfig({ compile_flags: '-Wall -Wextra', flag_overrides: parsed.overrides });
+  assert.deepEqual(cfg.makefile, ['fundamentals', 'proficiencies']);
+  assert.deepEqual(cfg.overrides, { file_io: ['-Wall'] });
+  assert.throws(() => parseFlagsFile('default: makefile'), /per folder/);
+});
