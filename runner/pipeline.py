@@ -228,9 +228,11 @@ INCLUDE_RE = re.compile(r'^\s*#\s*include\s*"([^"]+)"', re.MULTILINE)
 
 
 class Builder:
-    def __init__(self, submission, build_root, config=None):
+    def __init__(self, submission, build_root, config=None, valgrind=True):
         self.submission = submission
         self.build_root = build_root
+        # "plain" (uninstrumented) binaries only exist for valgrind.
+        self.variants = ("asan", "plain") if valgrind else ("asan",)
         self.make_cache = {}
         self.obj_cache = {}
         config = config or {}
@@ -448,19 +450,21 @@ class Builder:
                 logs.append("Also compiling code used from other exercises: %s"
                             % ", ".join(str(s.relative_to(self.submission)) for s in linked))
             sources = sources + linked
-            ok, plain_objs, text = self.compile_objects(unit, sources, "plain")
-            logs.append(text)
-            if not ok:
-                return {"ok": False, "log": "\n".join(logs),
-                        "reason": "Compilation failed (%s)." % " ".join(self.flags_for(unit))}
-            ok, asan_objs, _ = self.compile_objects(unit, sources, "asan")
-            if not ok:
-                return {"ok": False, "log": "\n".join(logs), "reason": "Compilation with sanitizers failed."}
-            objects = {"asan": asan_objs, "plain": plain_objs}
+            objects = {}
+            # The plain build first when there is one: its log shows exactly the assignment's flags.
+            for index, variant in enumerate(reversed(self.variants)):
+                ok, objs, text = self.compile_objects(unit, sources, variant)
+                if index == 0:
+                    logs.append(text)
+                if not ok:
+                    reason = ("Compilation failed (%s)." % " ".join(self.flags_for(unit))
+                              if index == 0 else "Compilation with sanitizers failed.")
+                    return {"ok": False, "log": "\n".join(logs), "reason": reason}
+                objects[variant] = objs
             student_sources = sources
 
         binaries = {}
-        for variant in ("asan", "plain"):
+        for variant in self.variants:
             ok, test_obj, output = self.compile_test_object(unit, variant, include_dirs)
             if not ok:
                 return {"ok": True, "log": "\n".join(logs), "test_error": "The test file %s does not compile. "
@@ -644,6 +648,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--work", default="/work")
     parser.add_argument("--slug", required=True)
+    # Validation runs (empty implementations) only need pass/fail: no valgrind, no plain build.
+    parser.add_argument("--no-valgrind", action="store_true")
     args = parser.parse_args()
 
     started = time.monotonic()
@@ -664,7 +670,7 @@ def main():
     # Compilation flags of the assignment (written by the worker, read before any student code runs).
     config_path = work / "config.json"
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
-    builder = Builder(submission, build_root, config)
+    builder = Builder(submission, build_root, config, valgrind=not args.no_valgrind)
     build_leaves = {}
     test_leaves = []
     counter = 0
@@ -698,7 +704,7 @@ def main():
             counter += 1
             outcome = run_single_test(built["binaries"]["asan"], unit, suite, name, tmp_dir, counter)
             item = leaf("%s/%s" % (prefix, suite), name, outcome.pop("status"), **outcome)
-            if item["status"] == "pass":
+            if item["status"] == "pass" and not args.no_valgrind:
                 if time.monotonic() - started < VALGRIND_BUDGET:
                     ok, details = run_valgrind(built["binaries"]["plain"], unit, suite, name, vg_dir, counter, student_files)
                     item["valgrind_ok"] = ok

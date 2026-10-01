@@ -91,10 +91,10 @@ function makeJobLog() {
   return { log, text: () => lines.join('\n').slice(-200000) };
 }
 
-async function grade(sub, { slug, submissionDir, testsDir, jobId, log }) {
+async function grade(sub, { slug, submissionDir, testsDir, jobId, log, valgrind = true }) {
   try {
     const compileConfig = pipelineConfig(getAssignment(slug));
-    const report = await runCorrection({ jobId, slug, submissionDir, testsDir, compileConfig, log });
+    const report = await runCorrection({ jobId, slug, submissionDir, testsDir, compileConfig, log, valgrind });
     const { passed, total } = saveReport(sub.id, report);
     return { status: 'done', passed, total, message: report.message ?? null };
   } catch (err) {
@@ -139,7 +139,8 @@ async function processValidation(sub, data, jobId, log) {
   if (!hasFiles(d.staging)) return { status: 'infra_error', message: 'No imported tests to validate.' };
   const submissionDir = data.role === 'stub_other' ? d.stubOther : d.stub;
   fs.mkdirSync(submissionDir, { recursive: true });
-  return grade(sub, { slug: data.slug, submissionDir, testsDir: d.staging, jobId, log });
+  // Validation only needs pass/fail on the empty implementations: valgrind is skipped.
+  return grade(sub, { slug: data.slug, submissionDir, testsDir: d.staging, jobId, log, valgrind: false });
 }
 
 async function processJob(job, token) {
