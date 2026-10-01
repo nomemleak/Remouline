@@ -238,11 +238,15 @@ class Builder:
         self.overrides = config.get("overrides") or {}
 
     def flags_for(self, unit):
-        """Assignment flags, or the exercise's own flags when the subject says so."""
+        """Assignment flags, or the exercise's own flags when the subject says so. Sanitizer
+        flags are dropped: the pipeline builds its own AddressSanitizer/UBSan variant, and the
+        plain variant must stay uninstrumented for valgrind."""
+        flags = self.default_flags
         for key in (unit.exercise_rel, "/".join(unit.parts), unit.exercise):
             if key in self.overrides:
-                return self.overrides[key]
-        return self.default_flags
+                flags = self.overrides[key]
+                break
+        return [f for f in flags if not f.startswith(("-fsanitize", "-fno-sanitize"))]
 
     def linked_sources(self, unit, sources):
         """Sources of OTHER exercise folders this exercise includes a header from
