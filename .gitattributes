@@ -1,0 +1,7 @@
+# Text files are stored and checked out with LF line endings: scripts, Dockerfiles and the
+# pipeline run on Linux, whatever system the repository is edited on.
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.jpg binary
+*.a binary
