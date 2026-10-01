@@ -137,7 +137,8 @@ function CompilationFlags({ data, onSave, busy }: { data: AssignmentPayload; onS
         <input className="input mono" value={flags} onChange={(e) => setFlags(e.target.value)} />
       </label>
       <label className="field">
-        Exceptions, one per line: <code>exercise_folder: flags</code> or <code>folder: makefile</code>
+        Exceptions, one per line: <code>exercise_folder: flags</code>, <code>folder: makefile</code>, or
+        <code>*: makefile</code> for every folder that has a Makefile
         <textarea className="textarea" style={{ minHeight: 70 }} value={overrides} onChange={(e) => setOverrides(e.target.value)}
           placeholder={'file_io: -pedantic -Werror -Wall -Wextra -Wvla\nfundamentals: makefile'} />
       </label>

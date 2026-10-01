@@ -179,5 +179,8 @@ test('flags: "makefile" marks folders built with their own Makefile', () => {
   const cfg = pipelineConfig({ compile_flags: '-Wall -Wextra', flag_overrides: parsed.overrides });
   assert.deepEqual(cfg.makefile, ['fundamentals', 'proficiencies']);
   assert.deepEqual(cfg.overrides, { file_io: ['-Wall'] });
-  assert.throws(() => parseFlagsFile('default: makefile'), /per folder/);
+  const all = parseFlagsFile('default: -Wall\ndefault: makefile');
+  assert.equal(all.defaultFlags, '-Wall');
+  assert.deepEqual(pipelineConfig({ flag_overrides: all.overrides }).makefile, ['*']);
+  assert.throws(() => parseFlagsFile('*: -Wall'), /only takes "makefile"/);
 });

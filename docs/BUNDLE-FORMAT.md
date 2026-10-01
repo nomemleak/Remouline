@@ -97,7 +97,8 @@ fundamentals: makefile
 - `<folder>: makefile` the assignment provides or requires a Makefile for that folder: programs run
   by the tests (`./name`) are built with `make`, and unit tests are compiled with the flags of the
   compile commands `make -n` prints (`-I`, `-o`, `-l` and sanitizer options are handled by the
-  pipeline). **Without this line, a Makefile found in a submission is never run**;
+  pipeline). `default: makefile` does this for every folder that has a Makefile. **Without such a
+  line, a Makefile found in a submission is never run**;
 - `#` starts a comment. Flags that could redirect output or load code (`-o`, `-B`, `-fplugin`...)
   are refused. Libraries (`-l*`, `-pthread`) are passed at link time; `-lm` is always added.
 

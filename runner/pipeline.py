@@ -209,9 +209,11 @@ class Unit:
             and ((self.exercise_dir / "src").is_dir() or (self.exercise_dir / "include").is_dir())
         )
         # The assignment says this folder is built with its Makefile ("<folder>: makefile" in
-        # its flags). Otherwise a Makefile found in the submission is never run.
-        self.uses_makefile = self.exercise_rel is not None and any(
-            key in makefile_keys for key in (self.exercise_rel, "/".join(self.parts), self.exercise))
+        # its flags, or "*: makefile" for every folder that has one). Otherwise a Makefile
+        # found in the submission is never run.
+        self.uses_makefile = self.exercise_dir is not None and (
+            any(key in makefile_keys for key in (self.exercise_rel, "/".join(self.parts), self.exercise))
+            or ("*" in makefile_keys and any((self.exercise_dir / m).is_file() for m in ("Makefile", "makefile"))))
         if self.exercise_dir is not None:
             # makefile: the tests run "./binary" built with the folder's Makefile; program: the
             # tests run "./binary" that we compile from the folder; functions: unit tests linked

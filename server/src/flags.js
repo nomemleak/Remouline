@@ -10,7 +10,9 @@
 // An exercise is matched by its folder name ("file_io") or its path
 // ("Fundamentals/file_io"). "makefile" means the assignment provides or requires a
 // Makefile for that folder: the pipeline builds programs with it and reads the
-// compilation flags from it. Without that line, a student's Makefile is never run.
+// compilation flags from it. "default: makefile" (stored as "*: makefile") applies it
+// to every folder that has a Makefile. Without such a line, a student's Makefile is
+// never run.
 import { config } from './config.js';
 
 const FLAG_RE = /^-[A-Za-z0-9_=+.,:-]+$/;
@@ -18,6 +20,7 @@ const FLAG_RE = /^-[A-Za-z0-9_=+.,:-]+$/;
 const FORBIDDEN = /^-(o|B|wrapper|fplugin|specs|x|E|S|c|M)/;
 const KEY_RE = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
 export const MAKEFILE = 'makefile';
+export const ALL_FOLDERS = '*';
 
 const fail = (message) => Object.assign(new Error(message), { status: 400 });
 
@@ -41,13 +44,17 @@ export function parseFlagsFile(text) {
     if (!m) throw fail(`Invalid flags line (expected "exercise: flags"): ${line}`);
     const key = m[1].trim();
     const value = m[2].trim();
-    if (key === 'default') {
-      if (value.toLowerCase() === MAKEFILE) throw fail('"makefile" is set per folder ("fundamentals: makefile"), not as the default.');
+    const makefile = value.toLowerCase() === MAKEFILE;
+    if ((key === 'default' || key === ALL_FOLDERS) && makefile) {
+      if (!overrides.includes(`${ALL_FOLDERS}: ${MAKEFILE}`)) overrides.push(`${ALL_FOLDERS}: ${MAKEFILE}`);
+    } else if (key === 'default') {
       defaultFlags = parseFlagList(value).join(' ');
+    } else if (key === ALL_FOLDERS) {
+      throw fail('"*" only takes "makefile" ("*: makefile"); put flags in "default:".');
     } else if (!KEY_RE.test(key)) {
       throw fail(`Invalid exercise name in flags: ${key}`);
     } else {
-      overrides.push(`${key}: ${value.toLowerCase() === MAKEFILE ? MAKEFILE : parseFlagList(value).join(' ')}`);
+      overrides.push(`${key}: ${makefile ? MAKEFILE : parseFlagList(value).join(' ')}`);
     }
   }
   return { defaultFlags, overrides: overrides.join('\n') };

@@ -229,7 +229,8 @@ Each assignment has **its own** flags, used for user code (never for test files)
 - Libraries are passed at link time (`-l*`, `-pthread`, always `-lm`). Dangerous flags (`-o`, `-B`,
   `-fplugin`...) are refused.
 - `<folder>: makefile` when the assignment provides a Makefile: programs are built with it and the
-  flags are read from it (`make -n`). Without that line, a submitted Makefile is never run.
+  flags are read from it (`make -n`); `default: makefile` for every folder that has one. Without such a
+  line, a submitted Makefile is never run.
 
 </details>
 
