@@ -194,8 +194,11 @@ Put the two tokens in `.env`: `GITEA_ADMIN_TOKEN` (first) and `GITEA_CLONE_TOKEN
 
 **Operator account** (you), with the login listed in `OPERATOR_LOGINS`:
 
+Type the command, then the password (nothing is shown) and Enter: it never reaches the screen or
+the shell history. Avoid `"` and `$` in it.
+
 ```bash
-docker compose exec -u git gitea gitea admin user create --username operator --email operator@noreply.localhost --password '<a long password>' --must-change-password=false
+read -rs PW && docker compose exec -u git gitea gitea admin user create --username operator --email operator@noreply.localhost --password "$PW" --must-change-password=false; unset PW
 ```
 
 It is a regular account, not a Gitea admin. Do not enable Gitea's two-factor authentication on
