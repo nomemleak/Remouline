@@ -37,6 +37,7 @@ export type AssignmentPayload = {
   publishedFiles: string[];
   preview: { tests: { file: string; category_path: string; test_name: string }[]; warnings: string[]; count: number };
   stagingDiffersFromPublished: boolean;
+  ignoredFlagLines?: string[];
 };
 
 type Mode = 'merge' | 'replace';
@@ -127,6 +128,12 @@ function CompilationFlags({ data, onSave, busy }: { data: AssignmentPayload; onS
         assignment provides a <code>Makefile</code> for a folder, write <code>folder: makefile</code>: programs are
         built with it and the flags are read from it. Without that line, students&apos; Makefiles are never run.
       </p>
+      {data.ignoredFlagLines?.length ? (
+        <div className="notice small s-warn">
+          Ignored (format no longer accepted): <code>{data.ignoredFlagLines.join(', ')}</code>. Fix the exceptions below,
+          e.g. one <code>folder: makefile</code> line per folder that has a Makefile.
+        </div>
+      ) : null}
       {source === 'fallback' ? (
         <div className="notice small">
           The bundle gave no <code>default:</code> line: the server fallback (<code>DEFAULT_COMPILE_FLAGS</code>) is

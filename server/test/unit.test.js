@@ -7,7 +7,7 @@ import { findTests, categoryPartsForTestFile, previewTests } from '../src/criter
 import { resolveSlug, safeRelativePath, isValidSlug } from '../src/assignments.js';
 import { hashToken } from '../src/tokens.js';
 import { parsePrototypes, stubDefinition, binariesUsed, functionsDefinedIn, generateStubSubmission } from '../src/stubs.js';
-import { parseFlagsFile, parseFlagList, pipelineConfig, freezeConfig, publishedConfig, draftFlagsDiffer } from '../src/flags.js';
+import { parseFlagsFile, parseFlagList, pipelineConfig, freezeConfig, publishedConfig, draftFlagsDiffer, storedOverrides } from '../src/flags.js';
 import { judge } from '../src/validation.js';
 
 test('findTests detects Test and ParameterizedTest, ignores comments', () => {
@@ -189,6 +189,10 @@ test('flags: "makefile" marks folders built with their own Makefile', () => {
   assert.throws(() => parseFlagsFile('default: makefile'), /one line per folder/);
   assert.throws(() => parseFlagsFile('*: makefile'), /Invalid exercise name/);
   assert.throws(() => parseFlagsFile('file_io: -Wall\nfile_io: -Wextra'), /given twice/);
+  // Saved by an older version: ignored and reported, never a crash of every correction.
+  const legacy = storedOverrides('*: makefile\nfundamentals: makefile\nfile_io: -Wall');
+  assert.deepEqual(legacy, { overrides: { file_io: ['-Wall'] }, makefile: ['fundamentals'], ignored: ['*: makefile'] });
+  assert.deepEqual(pipelineConfig({ flag_overrides: '*: makefile' }).makefile, []);
 });
 
 test('publication freezes the validated flags and the test list', () => {

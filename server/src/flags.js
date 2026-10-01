@@ -69,19 +69,38 @@ export function normalizeOverrides(text) {
 }
 
 /**
+ * Exceptions saved in the database. They were checked when saved, but a line an older version
+ * accepted and this one refuses (e.g. "*: makefile") is ignored and listed in `ignored`
+ * (shown in the admin panel) instead of failing every correction of the assignment.
+ */
+export function storedOverrides(text) {
+  const overrides = {};
+  const makefile = [];
+  const ignored = [];
+  for (const raw of String(text ?? '').split(/\r?\n/)) {
+    if (!raw.trim()) continue;
+    let line;
+    try {
+      line = parseFlagsFile(raw).overrides;
+    } catch {
+      ignored.push(raw.trim());
+      continue;
+    }
+    if (!line) continue;
+    const [key, flags] = line.split(/:\s*/);
+    if (flags === MAKEFILE) makefile.push(key);
+    else overrides[key] = flags.split(/\s+/).filter(Boolean);
+  }
+  return { overrides, makefile, ignored };
+}
+
+/**
  * Config file handed to the pipeline (runner/pipeline.py reads /work/config.json), from the
  * assignment's current (draft) flags. `tests`, set at publication, lists the tests as Criterion
  * listed them during validation.
  */
 export function pipelineConfig(assignment) {
-  const overrides = {};
-  const makefile = [];
-  const { overrides: lines } = parseFlagsFile(assignment?.flag_overrides ?? '');
-  for (const line of lines.split('\n').filter(Boolean)) {
-    const [key, flags] = line.split(/:\s*/);
-    if (flags === MAKEFILE) makefile.push(key);
-    else overrides[key] = flags.split(/\s+/).filter(Boolean);
-  }
+  const { overrides, makefile } = storedOverrides(assignment?.flag_overrides);
   return {
     default_flags: parseFlagList(assignment?.compile_flags || config.defaultCompileFlags),
     overrides,

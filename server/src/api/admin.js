@@ -21,7 +21,7 @@ import { getResults } from '../results.js';
 import { enqueueSubmission } from '../queue.js';
 import { startValidation, canValidate, REFERENCE_STUDENT } from '../validation.js';
 import { listReports, setReportStatus } from '../reports.js';
-import { parseFlagList, parseFlagsFile, normalizeOverrides, freezeConfig, draftFlagsDiffer } from '../flags.js';
+import { parseFlagList, parseFlagsFile, normalizeOverrides, freezeConfig, draftFlagsDiffer, storedOverrides } from '../flags.js';
 import { pushCommand } from '../push-command.js';
 import {
   ACCESS_MODES, getAccessMode, setAccessMode, createInvitation, listInvitations, revokeInvitation,
@@ -88,6 +88,7 @@ function assignmentPayload(assignment, role = 'maintainer') {
     stubFiles: readTextFiles(d.stub),
     stubOtherFiles: readTextFiles(d.stubOther),
     defaultCompileFlags: config.defaultCompileFlags,
+    ignoredFlagLines: storedOverrides(assignment.flag_overrides).ignored,
     attestation: { version: ATTESTATION_VERSION, text: ATTESTATION_TEXT },
     publishedFiles: listFiles(d.tests),
     preview: previewTests(staging),
