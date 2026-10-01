@@ -65,7 +65,7 @@ export const config = {
   jobTimeoutSec: envInt('JOB_TIMEOUT_SEC', 600),
   testTimeoutSec: envInt('TEST_TIMEOUT_SEC', 10),
   containerMemory: env('CONTAINER_MEMORY', '256m'),
-  containerCpus: env('CONTAINER_CPUS', '0.5'),
+  containerCpus: env('CONTAINER_CPUS', '1'),
   containerPids: envInt('CONTAINER_PIDS', 64),
   // Largest file a correction container may write (bytes).
   containerFsizeBytes: envInt('CONTAINER_FSIZE_BYTES', 64 * 1024 * 1024),

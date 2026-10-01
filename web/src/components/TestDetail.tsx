@@ -1,7 +1,7 @@
 'use client';
 
 // Failing-test view: error message, expected vs actual (with a line diff and a hex
-// view for binary content), valgrind result, and the raw "Failures" panel that
+// view for binary content), memory check result, and the raw "Failures" panel that
 // shows sanitizer / valgrind / compiler output exactly as produced.
 import { useState } from 'react';
 import type { TestResult } from '@/lib/types';
@@ -55,11 +55,12 @@ function Diff({ expected, actual }: { expected: string; actual: string }) {
   );
 }
 
-function Valgrind({ result }: { result: TestResult }) {
+// valgrind_ok / valgrind_details hold the memory check: LeakSanitizer, or valgrind for programs.
+function MemoryCheck({ result }: { result: TestResult }) {
   if (result.valgrind_ok === 1) {
     return (
       <div className="row small s-pass">
-        <IconCheck /> Valgrind: no memory error or leak detected in your code.
+        <IconCheck /> Memory check: no leak or memory error detected in your code.
       </div>
     );
   }
@@ -67,7 +68,7 @@ function Valgrind({ result }: { result: TestResult }) {
     return (
       <div className="stack" style={{ gap: 'var(--s-2)' }}>
         <div className="row small s-fail">
-          <IconCross /> Valgrind found memory errors or leaks in your code:
+          <IconCross /> The memory check found leaks or memory errors in your code:
         </div>
         <pre className="codeblock">{escapeForDisplay(result.valgrind_details)}</pre>
       </div>
@@ -75,7 +76,7 @@ function Valgrind({ result }: { result: TestResult }) {
   }
   return (
     <div className="row small faint">
-      <IconDash /> Valgrind: {result.valgrind_details ? escapeForDisplay(result.valgrind_details) : 'not run (only passing tests are checked).'}
+      <IconDash /> Memory check: {result.valgrind_details ? escapeForDisplay(result.valgrind_details) : 'not run (only passing tests are checked).'}
     </div>
   );
 }
@@ -122,7 +123,7 @@ export function TestDetail({ result, reporting }: { result: TestResult; reportin
           </>
         ) : null}
 
-        {isTest ? <Valgrind result={result} /> : null}
+        {isTest ? <MemoryCheck result={result} /> : null}
         {isTest && reporting ? (
           <>
             <hr className="sep" />

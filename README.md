@@ -18,7 +18,7 @@
   <img alt="Cloudflare Tunnel" src="https://img.shields.io/badge/Cloudflare-Tunnel-F38020?style=flat-square&logo=cloudflare&logoColor=white">
   <img alt="Redis" src="https://img.shields.io/badge/Redis-BullMQ-DC382D?style=flat-square&logo=redis&logoColor=white">
   <img alt="SQLite" src="https://img.shields.io/badge/SQLite-results-003B57?style=flat-square&logo=sqlite&logoColor=white">
-  <img alt="Criterion" src="https://img.shields.io/badge/Criterion-ASan%20%C2%B7%20valgrind-e8935a?style=flat-square">
+  <img alt="Criterion" src="https://img.shields.io/badge/Criterion-ASan%20%C2%B7%20LSan%20%C2%B7%20valgrind-e8935a?style=flat-square">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-e8935a?style=flat-square">
 </p>
 
@@ -54,11 +54,11 @@ anyone: users only get a verdict on their own code.
     </td>
     <td width="33%" valign="top">
       <strong>Reports you can act on</strong><br>
-      <sub>Collapsible tree with pass counts at every level, expected vs actual with a diff, raw AddressSanitizer / valgrind output, hex view for binary bytes.</sub>
+      <sub>Collapsible tree with pass counts at every level, expected vs actual with a diff, raw sanitizer / valgrind output, hex view for binary bytes.</sub>
     </td>
     <td width="33%" valign="top">
       <strong>Hard sandbox</strong><br>
-      <sub>One container per push: no network, 256 MB, 0.5 CPU, 64 pids, read-only root, unprivileged user, per-test timeouts.</sub>
+      <sub>One container per push: no network, 256 MB, 1 CPU, 64 pids, read-only root, unprivileged user, per-test timeouts.</sub>
     </td>
   </tr>
   <tr>
@@ -85,7 +85,7 @@ flowchart LR
   G -->|"signed webhook"| W["Webhook"]
   W --> Q[("Redis queue")]
   Q --> K["Worker pool"]
-  K -->|"one sandbox per push"| C[["Runner container<br/>gcc · Criterion · ASan · valgrind"]]
+  K -->|"one sandbox per push"| C[["Runner container<br/>gcc · Criterion · ASan · LSan · valgrind"]]
   C -->|"report.json"| D[("SQLite")]
   D --> A["Results API"]
   A -->|"internal network"| V["Dashboard + admin<br/>Next.js"]
@@ -104,7 +104,7 @@ The API, the webhook receiver and Redis stay on the internal Docker network.
 | Folder | Content |
 | --- | --- |
 | `server/` | Node.js backend: `src/webhook.js`, `src/worker.js`, `src/api/` (one image, three services) |
-| `runner/` | Correction image `remouline-runner` + `pipeline.py` (build, Criterion, sanitizers, valgrind) |
+| `runner/` | Correction image `remouline-runner` + `pipeline.py` (build, Criterion, sanitizers, memory check) |
 | `web/` | Next.js app: dashboard, `/admin` panel, shared design system |
 | `tunnel/` | `cloudflared` configuration (example) |
 | `scripts/backup.sh` | Nightly, encrypted, off-VM backup (Gitea dump + SQLite + assignments) |
@@ -122,7 +122,9 @@ The API, the webhook receiver and Redis stay on the internal Docker network.
    *not configured* status, never a crash.
 5. The correction runs **only inside that folder**, in a fresh sandbox: `Build` (per exercise, with
    the assignment's flags) → `Testsuite` (each Criterion test alone, with AddressSanitizer / UBSan
-   and a timeout) → valgrind on passing tests. An exercise that does not build has its tests marked
+   and a timeout) → memory check of passing tests: LeakSanitizer reports leaks of the user's code
+   during the test itself (no extra run); valgrind only checks programs (`./name`, Makefile builds),
+   which the sanitizers cannot see, or every test if LeakSanitizer cannot run in the sandbox. An exercise that does not build has its tests marked
    *Not run* instead of failing silently.
 6. The job folder and container are always deleted. Docker or system failures show as
    *infrastructure error* (not a test failure) and can be re-run from the admin panel.
@@ -169,8 +171,8 @@ flowchart LR
    (programs print nothing / print a line). Both go through the real pipeline. Every test file must
    compile and link, and every Criterion suite (one per function) must have a test failing on one of
    them. A test expecting NULL fails on the second version, so legitimate NULL/0 results are never
-   flagged. `void` functions (`free_*`, `destroy_*`) only warn: leaks are caught by valgrind on
-   real runs.
+   flagged. `void` functions (`free_*`, `destroy_*`) only warn: leaks are caught by the memory check
+   on real runs.
 4. Failed? The page lists the problems and exports a **validation report** (every result of both
    runs, with the current files) as JSON. Fix the tests and import only the changed files with
    *Update only these files*. Rare false positives can be overridden with **Publish anyway**
@@ -245,7 +247,7 @@ Each assignment has **its own** flags, used for user code (never for test files)
 <br>
 
 - Every test result stores the expected and actual output (extracted from messages such as
-  `Expected X but got Y`), the error message, and the raw sanitizer / valgrind / compiler output,
+  `Expected X but got Y`), the error message, and the raw sanitizer / leak / valgrind / compiler output,
   shown as-is in the **Failures** panel.
 - Invalid UTF-8 and control bytes are escaped (`\xff`, `\x00`) by the pipeline and again by the UI,
   which also offers a hex view.

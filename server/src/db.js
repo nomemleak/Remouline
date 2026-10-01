@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS test_results (
   expected_output   TEXT,
   error_message     TEXT,
   raw_output        TEXT,            -- full sanitizer / valgrind / compiler output, shown as-is
-  valgrind_ok       INTEGER,         -- 1 ok, 0 errors, NULL not run
+  valgrind_ok       INTEGER,         -- memory check (LeakSanitizer or valgrind): 1 ok, 0 errors, NULL not run
   valgrind_details  TEXT,
   duration_ms       INTEGER
 );

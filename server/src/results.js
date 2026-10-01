@@ -3,7 +3,7 @@ import { db, now } from './db.js';
 
 export const PASSING = 'pass';
 
-// A leaf counts as passed only if it passed AND valgrind did not flag it.
+// A leaf counts as passed only if it passed AND the memory check (LeakSanitizer or valgrind) did not flag it.
 export function leafPassed(leaf) {
   return leaf.status === PASSING && leaf.valgrind_ok !== 0 && leaf.valgrind_ok !== false;
 }

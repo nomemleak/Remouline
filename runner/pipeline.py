@@ -7,8 +7,11 @@ Layout (bind-mounted by the worker):
     /work/config.json   {default_flags, overrides, makefile, tests} (server/src/flags.js)
     /work/out/          report.json is written here
 
-Order: build -> Criterion tests -> valgrind on passing tests. Tests of an exercise whose
-build failed are reported as "skipped" with an explicit reason instead of being attempted.
+Order: build -> Criterion tests (one process per test, with AddressSanitizer/UBSan) -> memory
+check of passing tests. Leaks in the user's code are reported by LeakSanitizer during the test
+run itself; valgrind is only used where the sanitizers cannot see the user's code (programs
+built by its own Makefile or run as ./binary) or when LeakSanitizer cannot run. Tests of an
+exercise whose build failed are reported as "skipped" with an explicit reason.
 
 The report is a flat list of leaves; each leaf carries its full `category_path`
 (Build/..., Testsuite/<folders>/<exercise>/<suite>) so the tree can be rebuilt at any
@@ -38,12 +41,22 @@ STRICT_FLAGS = ["-Wall", "-Wextra", "-Werror"]
 TEST_FILE_ERRORS = ["-Werror=implicit-function-declaration", "-Werror=implicit-int", "-Werror=int-conversion",
                     "-Werror=incompatible-pointer-types"]
 ASAN_FLAGS = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
-SANITIZER_ENV = {
-    # Leaks are checked by valgrind; LeakSanitizer cannot run without ptrace in the sandbox.
-    "ASAN_OPTIONS": "detect_leaks=0:abort_on_error=1:symbolize=1:print_legend=0",
-    # abort (signal) rather than exit(1), so Criterion reports a crash and not a plain failure.
-    "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1:abort_on_error=1",
-}
+
+
+def sanitizer_env(leaks):
+    return {
+        "ASAN_OPTIONS": "detect_leaks=%d:abort_on_error=1:symbolize=1:print_legend=0" % (1 if leaks else 0),
+        # Leaks are reported when each test process exits, without changing its result: the
+        # pipeline reads the report (leaks_in) and keeps only leaks allocated by the user's code.
+        "LSAN_OPTIONS": "exitcode=0",
+        # abort (signal) rather than exit(1), so Criterion reports a crash and not a plain failure.
+        "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1:abort_on_error=1",
+    }
+
+
+def sanitizer_error(raw):
+    """A memory error or undefined behavior (a leak report alone is not one)."""
+    return "ERROR: AddressSanitizer" in raw or "runtime error" in raw
 
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 MAIN_RE = re.compile(r"^\s*int\s+main\s*\(", re.MULTILINE)
@@ -333,18 +346,26 @@ def read_makefile_flags(folder, rel):
 
 
 class Builder:
-    def __init__(self, submission, build_root, config=None, validation=False):
+    def __init__(self, submission, build_root, config=None, validation=False, leak_sanitizer=False):
         self.submission = submission
         self.build_root = build_root
         # Validation runs the empty implementations built from the assignment's own headers.
         self.validation = validation
-        # "plain" (uninstrumented) binaries only exist for valgrind, which validation skips.
-        self.variants = ("asan",) if validation else ("asan", "plain")
+        self.leak_sanitizer = leak_sanitizer
         self.make_cache = {}
         self.obj_cache = {}
         config = config or {}
         self.default_flags = config.get("default_flags") or STRICT_FLAGS
         self.overrides = config.get("overrides") or {}
+
+    def uses_valgrind(self, unit):
+        """Validation checks no memory. Unit tests of the user's functions run instrumented
+        (LeakSanitizer); programs built from the folder or by its Makefile need valgrind."""
+        return not self.validation and not (self.leak_sanitizer and unit.mode == "functions")
+
+    def variants(self, unit):
+        # "plain" (uninstrumented) binaries only exist for valgrind.
+        return ("asan", "plain") if self.uses_valgrind(unit) else ("asan",)
 
     def flags_for(self, unit):
         """Assignment flags, or the exercise's own flags when the subject says so. Sanitizer
@@ -595,7 +616,7 @@ class Builder:
             sources = sources + linked
             objects = {}
             # The plain build first when there is one: its log shows exactly the assignment's flags.
-            for index, variant in enumerate(reversed(self.variants)):
+            for index, variant in enumerate(reversed(self.variants(unit))):
                 ok, objs, text = self.compile_objects(unit, sources, variant)
                 if index == 0:
                     logs.append(text)
@@ -607,7 +628,7 @@ class Builder:
             student_sources = sources
 
         binaries = {}
-        for variant in self.variants:
+        for variant in self.variants(unit):
             ok, test_obj, output = self.compile_test_object(unit, variant, include_dirs)
             if not ok:
                 if self.validation:
@@ -631,7 +652,7 @@ class Builder:
 # Criterion execution + result interpretation
 # ---------------------------------------------------------------------------
 def list_tests(binary, unit):
-    res = run([str(binary), "--list"], cwd=str(unit.exercise_dir), timeout=TEST_TIMEOUT, env=SANITIZER_ENV)
+    res = run([str(binary), "--list"], cwd=str(unit.exercise_dir), timeout=TEST_TIMEOUT, env=sanitizer_env(False))
     tests, suite = [], None
     for line in (res["output"] or "").splitlines():
         header = re.match(r"^(\S+): \d+ tests?$", line.strip())
@@ -689,7 +710,7 @@ def find_test_json(report, suite, name):
 
 
 def text_fallback(raw, suite, name, code):
-    if "AddressSanitizer" in raw or "runtime error" in raw or "Unexpected signal" in raw or "CRASH" in raw:
+    if sanitizer_error(raw) or "Unexpected signal" in raw or "CRASH" in raw:
         return {"status": "ERRORED", "messages": []}
     if "[FAIL] %s::%s" % (suite, name) in raw:
         lines = [re.sub(r"^\[----\]\s?", "", l) for l in raw.splitlines() if l.startswith("[----]")]
@@ -719,13 +740,13 @@ def describe_crash(raw):
     return "The test crashed"
 
 
-def run_single_test(binary, unit, suite, name, tmp_dir, index):
+def run_single_test(binary, unit, suite, name, tmp_dir, index, leaks=False):
     json_path = tmp_dir / ("r%d.json" % index)
     if json_path.exists():
         json_path.unlink()
     # No --quiet: it would also swallow the sanitizer report printed by the test process.
     cmd = [str(binary), "--filter", "%s/%s" % (suite, name), "-j1", "--json=%s" % json_path]
-    res = run(cmd, cwd=str(unit.exercise_dir), timeout=TEST_TIMEOUT, env=SANITIZER_ENV)
+    res = run(cmd, cwd=str(unit.exercise_dir), timeout=TEST_TIMEOUT, env=sanitizer_env(leaks))
     raw = "\n".join(line for line in (res["output"] or "").splitlines()
                     if not line.startswith("[====] Synthesis")).strip()
     base = {"duration_ms": res["duration_ms"]}
@@ -745,7 +766,7 @@ def run_single_test(binary, unit, suite, name, tmp_dir, index):
         return dict(base, status="pass", raw_output=raw or None)
     if status_raw == "SKIPPED":
         return dict(base, status="skipped", error_message=message or "Skipped by the testsuite.")
-    crashed = status_raw == "ERRORED" or "AddressSanitizer" in raw or "runtime error" in raw or (res["code"] or 0) < 0
+    crashed = status_raw == "ERRORED" or sanitizer_error(raw) or (res["code"] or 0) < 0
     if status_raw == "FAILED" and not crashed:
         actual, expected = extract_io(message)
         return dict(base, status="fail", error_message=message or "Assertion failed.",
@@ -757,6 +778,46 @@ def run_single_test(binary, unit, suite, name, tmp_dir, index):
                     raw_output=raw or "No output was captured (the process was killed by a signal).")
     return dict(base, status="error", error_message=message or "Unknown Criterion status %r." % status_raw,
                 raw_output=raw or None)
+
+
+LEAK_PROBE = """#include <stdlib.h>
+
+__attribute__((noinline)) static void lose(void)
+{
+    char *volatile block = malloc(7);
+
+    block[0] = 1;
+}
+
+int main(void)
+{
+    for (int i = 0; i < 16; i++)
+        lose();
+    return 0;
+}
+"""
+LEAK_BLOCK_RE = re.compile(r"^(?:Direct|Indirect) leak of .*?(?=\n[ \t]*\n|\Z)", re.MULTILINE | re.DOTALL)
+
+
+def leak_sanitizer_works(build_root):
+    """LeakSanitizer needs ptrace, which a sandbox may forbid: checked once per run on a
+    program that leaks, valgrind is used instead when it reports nothing."""
+    src, exe = build_root / "leak_probe.c", build_root / "leak_probe"
+    src.write_text(LEAK_PROBE)
+    if run(["gcc", *ASAN_FLAGS, str(src), "-o", str(exe)], timeout=BUILD_TIMEOUT)["code"] != 0:
+        return False
+    res = run([str(exe)], timeout=TEST_TIMEOUT, env=sanitizer_env(True))
+    return "LeakSanitizer: detected memory leaks" in (res["output"] or "")
+
+
+def leaks_in(raw, student_files):
+    """LeakSanitizer reports (printed when the test process exits) of memory allocated by the
+    user's code: "#1 0x... in my_strdup /work/submission/.../my_strdup.c:12"."""
+    flagged = []
+    for block in LEAK_BLOCK_RE.findall(raw or ""):
+        if any(re.search(r"[ /]%s:\d" % re.escape(f), block) for f in student_files):
+            flagged.append(block.strip())
+    return flagged
 
 
 VALGRIND_KEYWORDS = ("Invalid read", "Invalid write", "Invalid free", "Mismatched free", "uninitialised",
@@ -798,8 +859,7 @@ def main():
     parser.add_argument("--work", default="/work")
     parser.add_argument("--slug", required=True)
     # Validation runs (empty implementations built from the assignment's headers) only need
-    # pass/fail: no valgrind, no plain build, and a test file that does not compile is the
-    # testsuite's fault.
+    # pass/fail: no memory check, and a test file that does not compile is the testsuite's fault.
     parser.add_argument("--validation", action="store_true")
     args = parser.parse_args()
 
@@ -828,7 +888,11 @@ def main():
         prefix, _, suite = category_path.rpartition("/")
         known_tests.setdefault(prefix, []).append((suite, test_name))
     units = [Unit(tests_root, submission, rel, makefile_keys) for rel in test_files]
-    builder = Builder(submission, build_root, config, validation=args.validation)
+    leak_sanitizer = not args.validation and leak_sanitizer_works(build_root)
+    if not args.validation:
+        print("memory check: %s" % ("LeakSanitizer (valgrind for programs)" if leak_sanitizer
+                                    else "valgrind (LeakSanitizer cannot run here)"))
+    builder = Builder(submission, build_root, config, validation=args.validation, leak_sanitizer=leak_sanitizer)
     build_leaves = {}
     test_leaves = []
     counter = 0
@@ -859,11 +923,20 @@ def main():
             continue
 
         student_files = sorted({p.name for p in built["student_sources"]})
+        valgrind = builder.uses_valgrind(unit)
+        leaks = not args.validation and not valgrind
         for suite, name in list_tests(built["binaries"]["asan"], unit):
             counter += 1
-            outcome = run_single_test(built["binaries"]["asan"], unit, suite, name, tmp_dir, counter)
+            outcome = run_single_test(built["binaries"]["asan"], unit, suite, name, tmp_dir, counter, leaks=leaks)
             item = leaf("%s/%s" % (prefix, suite), name, outcome.pop("status"), **outcome)
-            if item["status"] == "pass" and not args.validation:
+            if item["status"] == "pass" and leaks:
+                flagged = leaks_in(item["raw_output"], student_files)
+                item["valgrind_ok"] = not flagged
+                if flagged:
+                    item["status"] = "memory_error"
+                    item["valgrind_details"] = cap("\n\n".join(flagged))
+                    item["error_message"] = "The test passed, but LeakSanitizer found memory leaks in your code."
+            elif item["status"] == "pass" and valgrind:
                 if time.monotonic() - started < VALGRIND_BUDGET:
                     ok, details = run_valgrind(built["binaries"]["plain"], unit, suite, name, vg_dir, counter, student_files)
                     item["valgrind_ok"] = ok

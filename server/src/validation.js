@@ -48,7 +48,7 @@ export function exerciseKey(leaf) {
 /**
  * Pure verdict from the two runs (exported for unit tests). `voidFunctions`: suites
  * named after a void function (free_*, destroy_*...) cannot fail on empty code (doing
- * nothing is only visible as a leak, checked by valgrind on student runs): warning only.
+ * nothing is only visible as a leak, found by the memory check on student runs): warning only.
  */
 export function judge(zeroResults, otherResults, { voidFunctions = [] } = {}) {
   const voids = new Set(voidFunctions);
@@ -85,7 +85,7 @@ export function judge(zeroResults, otherResults, { voidFunctions = [] } = {}) {
     const vacuous = leaves.filter(passesBoth);
     const suiteName = suite.slice(suite.lastIndexOf('/') + 1);
     if (vacuous.length === leaves.length && voids.has(suiteName)) {
-      warnings.push(`${suite.replace(/^Testsuite\//, '')}: void function, cannot fail on empty code (leaks are checked by valgrind on student runs).`);
+      warnings.push(`${suite.replace(/^Testsuite\//, '')}: void function, cannot fail on empty code (leaks are found by the memory check on student runs).`);
     } else if (vacuous.length === leaves.length) {
       blocking.push(`No test of ${suite.replace(/^Testsuite\//, '')} fails on either empty implementation (0/NULL or non-zero): they check nothing.`);
     } else {
