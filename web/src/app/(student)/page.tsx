@@ -14,13 +14,14 @@ export const metadata = { title: 'Assignments' };
 
 export default async function HomePage() {
   const user = await requireUser();
-  let data: { assignments: AssignmentSummary[]; unrouted: Submission[] };
+  let data: { assignments: AssignmentSummary[]; unrouted: Submission[]; inProgress?: Submission[] };
   try {
-    data = await studentApi<{ assignments: AssignmentSummary[]; unrouted: Submission[] }>(user.login, '/assignments');
+    data = await studentApi<{ assignments: AssignmentSummary[]; unrouted: Submission[]; inProgress?: Submission[] }>(user.login, '/assignments');
   } catch (error) {
     return <ErrorState error={error} />;
   }
-  const pending = data.assignments.some((a) => a.latest && ['queued', 'running'].includes(a.latest.status));
+  const inProgress = data.inProgress ?? [];
+  const pending = inProgress.length > 0 || data.assignments.some((a) => a.latest && ['queued', 'running'].includes(a.latest.status));
 
   return (
     <div className="stack-lg">
@@ -56,6 +57,22 @@ export default async function HomePage() {
           ))}
         </div>
       )}
+
+      {inProgress.length > 0 ? (
+        <section className="stack">
+          <h3>Being graded</h3>
+          <div className="stack" style={{ gap: 'var(--s-2)' }}>
+            {inProgress.map((s) => (
+              <div key={s.id} className="card card-tight spread">
+                <span className="mono small">{s.repo_name} @ {shortSha(s.commit_sha)}</span>
+                <span className="small faint">
+                  {s.status === 'running' ? 'Running' : 'Queued'}{s.message ? ` · ${s.message}` : ''} · {formatDate(s.created_at)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {data.unrouted.length > 0 ? (
         <section className="stack">

@@ -447,7 +447,8 @@ export async function mockCall(scope: 'student' | 'admin' | 'public', login: str
           const l = mine[0];
           return { slug: a.slug, title: a.title, published_at: a.published_at, attempts: mine.length, latest: l ? { id: l.id, status: l.status, passed: l.passed, total: l.total, created_at: l.created_at } : null };
         }),
-        unrouted: s.submissions.filter((x) => own(x) && !published.some((a) => a.slug === x.assignment)).map(SUB_PUBLIC),
+        unrouted: s.submissions.filter((x) => own(x) && !['queued', 'running'].includes(x.status) && !published.some((a) => a.slug === x.assignment)).map(SUB_PUBLIC),
+        inProgress: s.submissions.filter((x) => own(x) && ['queued', 'running'].includes(x.status) && !x.assignment).map(SUB_PUBLIC),
       };
     }
     if (p[0] === 'assignments') {

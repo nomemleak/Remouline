@@ -80,15 +80,25 @@ studentRouter.get('/assignments', (req, res) => {
     )
     .all(req.student, req.student)
     .map((r) => ({ ...r, latest: r.latest ? JSON.parse(r.latest) : null }));
+  // A push gets its assignment once the worker has cloned it: until then it is in progress,
+  // not "unrouted".
   const unrouted = db()
     .prepare(
       `SELECT ${SUBMISSION_COLS} FROM submissions
-        WHERE kind = 'push' AND student = ? AND (status = 'not_configured' OR assignment IS NULL
-              OR assignment NOT IN (SELECT slug FROM assignments WHERE status = 'published'))
+        WHERE kind = 'push' AND student = ? AND status NOT IN ('queued', 'running')
+          AND (status = 'not_configured' OR assignment IS NULL
+               OR assignment NOT IN (SELECT slug FROM assignments WHERE status = 'published'))
         ORDER BY id DESC LIMIT 20`,
     )
     .all(req.student);
-  res.json({ assignments: rows, unrouted });
+  const inProgress = db()
+    .prepare(
+      `SELECT ${SUBMISSION_COLS} FROM submissions
+        WHERE kind = 'push' AND student = ? AND status IN ('queued', 'running') AND assignment IS NULL
+        ORDER BY id DESC LIMIT 20`,
+    )
+    .all(req.student);
+  res.json({ assignments: rows, unrouted, inProgress });
 });
 
 studentRouter.get('/assignments/:slug', (req, res) => {
