@@ -138,9 +138,11 @@ In the Cloudflare dashboard, for your domain:
 - **Security > Bots**: turn **Bot Fight Mode off** (it challenges `git` clients, which then fail
   without a clear message);
 - **SSL/TLS > Edge Certificates**: **Always Use HTTPS** on;
-- **Security > WAF > Rate limiting rules**: one rule on hostname `git.example.com`, counting requests
-  per IP whose response status is `401`, e.g. 20 per 10 seconds, then block. The dashboard limits
-  failed logins itself, but Git over HTTPS checks passwords directly in Gitea, which has no limit.
+- **Security > WAF > Rate limiting rules**: one rule, `URI Path` contains `.git/`, counted per IP,
+  30 requests per 10 seconds, action *Block* for 10 seconds (what the free plan allows). The
+  dashboard limits failed logins itself, but Git over HTTPS checks passwords directly in Gitea,
+  which has no limit: this caps password guessing through Git to a few attempts per second. Users
+  behind one shared address (a school network) share the counter: raise the threshold if needed.
 
 On the free plan, Cloudflare refuses request bodies over 100 MB: a single push cannot be larger.
 
