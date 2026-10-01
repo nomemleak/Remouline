@@ -95,6 +95,8 @@ async function grade(sub, { slug, submissionDir, testsDir, jobId, log, valgrind 
   try {
     const compileConfig = pipelineConfig(getAssignment(slug));
     const report = await runCorrection({ jobId, slug, submissionDir, testsDir, compileConfig, log, valgrind });
+    // Deleted while it ran (e.g. its assignment was deleted): nothing left to save.
+    if (!getSubmission(sub.id)) return { status: 'discarded' };
     const { passed, total } = saveReport(sub.id, report);
     return { status: 'done', passed, total, message: report.message ?? null };
   } catch (err) {
@@ -186,6 +188,10 @@ async function processJob(job, token) {
     if (data.type === 'push') await releaseSlot(sub.student, member);
   }
 
+  if (outcome.status === 'discarded') {
+    logger.info(`job ${jobId}: submission ${sub.id} was deleted meanwhile, result discarded`);
+    return;
+  }
   finishSubmission(sub.id, { ...outcome, jobLog: text() });
   const level = outcome.status === 'infra_error' ? 'error' : 'info';
   logger[level](`job ${jobId} finished: ${outcome.status}`, { submission: sub.id, message: outcome.message ?? undefined });
