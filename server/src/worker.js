@@ -9,7 +9,7 @@ import { createLogger } from './logger.js';
 import { redis } from './queue.js';
 import { internalCloneUrl } from './gitea.js';
 import { dirs, getAssignment, getPublishedAssignment, hasFiles, resolveSlug } from './assignments.js';
-import { pipelineConfig } from './flags.js';
+import { pipelineConfig, publishedConfig } from './flags.js';
 import { runCorrection, run, InfraError, JobTimeoutError } from './correction.js';
 import {
   getSubmission, markRunning, setWaitingMessage, setAssignment, finishSubmission, saveReport,
@@ -91,10 +91,12 @@ function makeJobLog() {
   return { log, text: () => lines.join('\n').slice(-200000) };
 }
 
-async function grade(sub, { slug, submissionDir, testsDir, jobId, log, valgrind = true }) {
+async function grade(sub, { slug, submissionDir, testsDir, jobId, log, validation = false }) {
   try {
-    const compileConfig = pipelineConfig(getAssignment(slug));
-    const report = await runCorrection({ jobId, slug, submissionDir, testsDir, compileConfig, log, valgrind });
+    // Pushes use what was frozen at publication; validation uses the current draft.
+    const assignment = getAssignment(slug);
+    const compileConfig = validation ? pipelineConfig(assignment) : publishedConfig(assignment);
+    const report = await runCorrection({ jobId, slug, submissionDir, testsDir, compileConfig, log, validation });
     // Deleted while it ran (e.g. its assignment was deleted): nothing left to save.
     if (!getSubmission(sub.id)) return { status: 'discarded' };
     const { passed, total } = saveReport(sub.id, report);
@@ -141,8 +143,7 @@ async function processValidation(sub, data, jobId, log) {
   if (!hasFiles(d.staging)) return { status: 'infra_error', message: 'No imported tests to validate.' };
   const submissionDir = data.role === 'stub_other' ? d.stubOther : d.stub;
   fs.mkdirSync(submissionDir, { recursive: true });
-  // Validation only needs pass/fail on the empty implementations: valgrind is skipped.
-  return grade(sub, { slug: data.slug, submissionDir, testsDir: d.staging, jobId, log, valgrind: false });
+  return grade(sub, { slug: data.slug, submissionDir, testsDir: d.staging, jobId, log, validation: true });
 }
 
 async function processJob(job, token) {

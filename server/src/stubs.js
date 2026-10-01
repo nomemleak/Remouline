@@ -24,7 +24,7 @@ function stripNoise(source) {
   return source
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .replace(/\/\/[^\n]*/g, ' ')
-    .replace(/^\s*#(?:[^\n]*\\\n)*[^\n]*/gm, ' ') // preprocessor lines, with continuations
+    .replace(/^\s*#(?:[^\n]*\\\r?\n)*[^\n]*/gm, ' ') // preprocessor lines, with continuations
     .replace(/"(?:\\.|[^"\\])*"/g, '""');
 }
 

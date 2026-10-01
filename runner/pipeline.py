@@ -4,6 +4,7 @@
 Layout (bind-mounted by the worker):
     /work/submission/   content of the student's <slug>/ folder (read-write, builds happen here)
     /work/tests/        Criterion files of the assignment (read-only)
+    /work/config.json   {default_flags, overrides, makefile, tests} (server/src/flags.js)
     /work/out/          report.json is written here
 
 Order: build -> Criterion tests -> valgrind on passing tests. Tests of an exercise whose
@@ -32,6 +33,10 @@ BUILD_TIMEOUT = int(os.environ.get("BUILD_TIMEOUT", "120"))
 # Stop starting valgrind runs after this many seconds, so the global job timeout is never hit.
 VALGRIND_BUDGET = int(os.environ.get("VALGRIND_BUDGET", "360"))
 STRICT_FLAGS = ["-Wall", "-Wextra", "-Werror"]
+# Test files are compiled without the assignment's flags, but a function or type the user's
+# header does not declare (as the subject requires) must stop the build, not crash at run time.
+TEST_FILE_ERRORS = ["-Werror=implicit-function-declaration", "-Werror=implicit-int", "-Werror=int-conversion",
+                    "-Werror=incompatible-pointer-types"]
 ASAN_FLAGS = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
 SANITIZER_ENV = {
     # Leaks are checked by valgrind; LeakSanitizer cannot run without ptrace in the sandbox.
@@ -260,12 +265,11 @@ class Unit:
             and not (self.exercise_dir / (self.exercise + ".c")).exists()
             and ((self.exercise_dir / "src").is_dir() or (self.exercise_dir / "include").is_dir())
         )
-        # The assignment says this folder is built with its Makefile ("<folder>: makefile" in
-        # its flags, or "*: makefile" for every folder that has one). Otherwise a Makefile
-        # found in the submission is never run.
-        self.uses_makefile = self.exercise_dir is not None and (
-            any(key in makefile_keys for key in (self.exercise_rel, "/".join(self.parts), self.exercise))
-            or ("*" in makefile_keys and any((self.exercise_dir / m).is_file() for m in ("Makefile", "makefile"))))
+        # Names an assignment's flags.txt may use for this exercise, most specific first.
+        self.keys = [k for k in (self.exercise_rel, "/".join(self.parts), self.exercise) if k]
+        # The assignment says this folder is built with its Makefile ("<folder>: makefile").
+        # Otherwise a Makefile found in the submission is never run.
+        self.uses_makefile = self.exercise_dir is not None and any(k in makefile_keys for k in self.keys)
         if self.exercise_dir is not None:
             # makefile: the tests run "./binary" built with the folder's Makefile; program: the
             # tests run "./binary" that we compile from the folder; functions: unit tests linked
@@ -291,9 +295,13 @@ NOT_KEPT = ("-c", "-I", "-L", "-l", "-M", "-o", "-fsanitize", "-fno-sanitize", "
             "-specs", "-isystem", "-iquote", "-include")
 
 
+def has_makefile(folder):
+    return any((folder / name).is_file() for name in ("Makefile", "makefile", "GNUmakefile"))
+
+
 def read_makefile_flags(folder, rel):
     """Flags used by the compile commands that `make -n` prints for this folder."""
-    if not (folder / "Makefile").exists() and not (folder / "makefile").exists():
+    if not has_makefile(folder):
         return None, ("The assignment builds %s/ with its Makefile, but there is none: "
                       "the assignment's default flags are used." % rel)
     res = run(["make", "-n", "-B", "-C", str(folder)], timeout=BUILD_TIMEOUT)
@@ -325,11 +333,13 @@ def read_makefile_flags(folder, rel):
 
 
 class Builder:
-    def __init__(self, submission, build_root, config=None, valgrind=True):
+    def __init__(self, submission, build_root, config=None, validation=False):
         self.submission = submission
         self.build_root = build_root
-        # "plain" (uninstrumented) binaries only exist for valgrind.
-        self.variants = ("asan", "plain") if valgrind else ("asan",)
+        # Validation runs the empty implementations built from the assignment's own headers.
+        self.validation = validation
+        # "plain" (uninstrumented) binaries only exist for valgrind, which validation skips.
+        self.variants = ("asan",) if validation else ("asan", "plain")
         self.make_cache = {}
         self.obj_cache = {}
         config = config or {}
@@ -345,10 +355,7 @@ class Builder:
         if from_makefile is not None:
             flags = from_makefile
         else:
-            for key in (unit.exercise_rel, "/".join(unit.parts), unit.exercise):
-                if key in self.overrides:
-                    flags = self.overrides[key]
-                    break
+            flags = next((self.overrides[k] for k in unit.keys if k in self.overrides), flags)
         return [f for f in flags if not f.startswith(("-fsanitize", "-fno-sanitize"))]
 
     def makefile_flags(self, unit):
@@ -476,14 +483,28 @@ class Builder:
         return result
 
     def run_make(self, unit):
+        """Builds the folder with its Makefile: (ok, log, reason when it failed)."""
         key = str(unit.exercise_dir)
         if key not in self.make_cache:
+            if not has_makefile(unit.exercise_dir):
+                self.make_cache[key] = (False, "No Makefile in %s/." % unit.exercise_rel,
+                                        "The assignment requires a Makefile in %s/." % unit.exercise_rel)
+                return self.make_cache[key]
             res = run(["make", "-C", str(unit.exercise_dir)], timeout=BUILD_TIMEOUT)
             text = "$ make -C %s\n%s" % (unit.exercise_rel, res["output"] or "")
+            reason = None
             if res["timed_out"]:
                 text += "\nmake timed out after %ds." % BUILD_TIMEOUT
-            self.make_cache[key] = (res["code"] == 0 and not res["timed_out"], text.strip())
-        return self.make_cache[key]
+                reason = "make timed out."
+            elif res["code"] != 0:
+                reason = "make failed."
+            self.make_cache[key] = (reason is None, text.strip(), reason)
+        ok, text, reason = self.make_cache[key]
+        missing = [b for b in unit.binaries if not (unit.exercise_dir / b).is_file()] if ok else []
+        if missing:
+            # Several test files can share a folder: each checks the programs it runs.
+            return False, text, "make did not produce %s." % ", ".join("./" + b for b in missing)
+        return ok, text, reason
 
     def compile_test_object(self, unit, variant, include_dirs):
         out = self.build_root / ("test-%s-%s.o" % (re.sub(r"[^A-Za-z0-9]+", "_", unit.rel), variant))
@@ -491,7 +512,8 @@ class Builder:
         includes = []
         for d in include_dirs:
             includes += ["-I", str(d)]
-        res = run(["gcc", "-w", "-g", *extra, *includes, "-c", str(unit.test_file), "-o", str(out)], timeout=BUILD_TIMEOUT)
+        res = run(["gcc", *TEST_FILE_ERRORS, "-g", *extra, *includes, "-c", str(unit.test_file), "-o", str(out)],
+                  timeout=BUILD_TIMEOUT)
         return res["code"] == 0, out, res["output"] or ""
 
     def link_flags(self, unit):
@@ -547,10 +569,10 @@ class Builder:
         logs = []
 
         if unit.mode == "makefile":
-            ok, text = self.run_make(unit)
+            ok, text, reason = self.run_make(unit)
             logs.append(text)
             if not ok:
-                return {"ok": False, "log": "\n".join(logs), "reason": "make failed."}
+                return {"ok": False, "log": "\n".join(logs), "reason": reason}
             objects = {"asan": [], "plain": []}
             student_sources = [p for p in unit.exercise_dir.rglob("*.c")]
         elif unit.mode == "program":
@@ -588,8 +610,14 @@ class Builder:
         for variant in self.variants:
             ok, test_obj, output = self.compile_test_object(unit, variant, include_dirs)
             if not ok:
-                return {"ok": True, "log": "\n".join(logs), "test_error": "The test file %s does not compile. "
-                        "This is a problem with the testsuite, not with your code.\n\n%s" % (unit.rel, output)}
+                if self.validation:
+                    # The assignment's own headers are used: the test file itself is wrong.
+                    return {"ok": True, "log": "\n".join(logs), "test_error": "The test file %s does not "
+                            "compile against the assignment's headers.\n\n%s" % (unit.rel, output)}
+                logs.append("$ compile the tests of %s\n%s" % (unit.rel, output))
+                return {"ok": False, "log": "\n".join(logs),
+                        "reason": "The tests do not compile with your headers: check that their names, "
+                                  "prototypes, structures and types match the subject."}
             ok, binary, output = self.link(unit, objects[variant], test_obj, variant)
             if not ok:
                 logs.append("$ link with %s\n%s" % (unit.rel, output))
@@ -769,8 +797,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--work", default="/work")
     parser.add_argument("--slug", required=True)
-    # Validation runs (empty implementations) only need pass/fail: no valgrind, no plain build.
-    parser.add_argument("--no-valgrind", action="store_true")
+    # Validation runs (empty implementations built from the assignment's headers) only need
+    # pass/fail: no valgrind, no plain build, and a test file that does not compile is the
+    # testsuite's fault.
+    parser.add_argument("--validation", action="store_true")
     args = parser.parse_args()
 
     started = time.monotonic()
@@ -791,8 +821,14 @@ def main():
     config_path = work / "config.json"
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
     makefile_keys = set(config.get("makefile") or [])
+    # Tests of the published testsuite as Criterion listed them during its validation, so a
+    # failed build lists exactly the tests a successful one runs (same total for everyone).
+    known_tests = {}
+    for category_path, test_name in config.get("tests") or []:
+        prefix, _, suite = category_path.rpartition("/")
+        known_tests.setdefault(prefix, []).append((suite, test_name))
     units = [Unit(tests_root, submission, rel, makefile_keys) for rel in test_files]
-    builder = Builder(submission, build_root, config, valgrind=not args.no_valgrind)
+    builder = Builder(submission, build_root, config, validation=args.validation)
     build_leaves = {}
     test_leaves = []
     counter = 0
@@ -809,7 +845,8 @@ def main():
 
         prefix = "/".join(["Testsuite", *unit.parts])
         if not built["ok"] or built.get("test_error"):
-            names = static_tests(unit.test_file.read_text(errors="replace")) or [("tests", unit.exercise)]
+            names = (known_tests.get(prefix) or static_tests(unit.test_file.read_text(errors="replace"))
+                     or [("tests", unit.exercise)])
             for suite, name in names:
                 if built.get("test_error"):
                     test_leaves.append(leaf("%s/%s" % (prefix, suite), name, "error",
@@ -826,7 +863,7 @@ def main():
             counter += 1
             outcome = run_single_test(built["binaries"]["asan"], unit, suite, name, tmp_dir, counter)
             item = leaf("%s/%s" % (prefix, suite), name, outcome.pop("status"), **outcome)
-            if item["status"] == "pass" and not args.no_valgrind:
+            if item["status"] == "pass" and not args.validation:
                 if time.monotonic() - started < VALGRIND_BUDGET:
                     ok, details = run_valgrind(built["binaries"]["plain"], unit, suite, name, vg_dir, counter, student_files)
                     item["valgrind_ok"] = ok

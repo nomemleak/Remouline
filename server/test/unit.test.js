@@ -7,7 +7,7 @@ import { findTests, categoryPartsForTestFile, previewTests } from '../src/criter
 import { resolveSlug, safeRelativePath, isValidSlug } from '../src/assignments.js';
 import { hashToken } from '../src/tokens.js';
 import { parsePrototypes, stubDefinition, binariesUsed, functionsDefinedIn, generateStubSubmission } from '../src/stubs.js';
-import { parseFlagsFile, parseFlagList, pipelineConfig } from '../src/flags.js';
+import { parseFlagsFile, parseFlagList, pipelineConfig, freezeConfig, publishedConfig, draftFlagsDiffer } from '../src/flags.js';
 import { judge } from '../src/validation.js';
 
 test('findTests detects Test and ParameterizedTest, ignores comments', () => {
@@ -186,8 +186,25 @@ test('flags: "makefile" marks folders built with their own Makefile', () => {
   const cfg = pipelineConfig({ compile_flags: '-Wall -Wextra', flag_overrides: parsed.overrides });
   assert.deepEqual(cfg.makefile, ['fundamentals', 'proficiencies']);
   assert.deepEqual(cfg.overrides, { file_io: ['-Wall'] });
-  const all = parseFlagsFile('default: -Wall\ndefault: makefile');
-  assert.equal(all.defaultFlags, '-Wall');
-  assert.deepEqual(pipelineConfig({ flag_overrides: all.overrides }).makefile, ['*']);
-  assert.throws(() => parseFlagsFile('*: -Wall'), /only takes "makefile"/);
+  assert.throws(() => parseFlagsFile('default: makefile'), /one line per folder/);
+  assert.throws(() => parseFlagsFile('*: makefile'), /Invalid exercise name/);
+  assert.throws(() => parseFlagsFile('file_io: -Wall\nfile_io: -Wextra'), /given twice/);
+});
+
+test('publication freezes the validated flags and the test list', () => {
+  const draft = { compile_flags: '-Wall', flag_overrides: 'shout: makefile' };
+  const results = [
+    { category_path: 'Build/Programs', test_name: 'shout' },
+    { category_path: 'Testsuite/Programs/shout/shout', test_name: 'uppercases' },
+  ];
+  const published = { ...draft, published_config: JSON.stringify(freezeConfig(draft, results)) };
+  assert.deepEqual(publishedConfig(published), {
+    default_flags: ['-Wall'], overrides: {}, makefile: ['shout'], tests: [['Testsuite/Programs/shout/shout', 'uppercases']],
+  });
+  assert.equal(draftFlagsDiffer(published), false);
+  // Editing the draft flags does not reach students until the next publication.
+  const edited = { ...published, compile_flags: '-Wall -Werror' };
+  assert.deepEqual(publishedConfig(edited).default_flags, ['-Wall']);
+  assert.equal(draftFlagsDiffer(edited), true);
+  assert.deepEqual(publishedConfig(draft), pipelineConfig(draft), 'published before snapshots existed');
 });

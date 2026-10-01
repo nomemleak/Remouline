@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS assignments (
   validated_at       TEXT,
   compile_flags      TEXT,
   flag_overrides     TEXT,
-  flags_source       TEXT NOT NULL DEFAULT 'fallback' -- bundle | admin | fallback
+  flags_source       TEXT NOT NULL DEFAULT 'fallback', -- bundle | admin | fallback
+  published_config   TEXT                           -- JSON: flags + test list frozen at publication
 );
 
 -- One row per push (never overwritten) and one row per reference-validation run.
@@ -183,7 +184,9 @@ export function db() {
 
 // Columns added after a release go here: CREATE TABLE IF NOT EXISTS never alters an
 // existing table. Format: [table, column, type].
-const ADDED_COLUMNS = [];
+const ADDED_COLUMNS = [
+  ['assignments', 'published_config', 'TEXT'],
+];
 
 function migrate(database) {
   for (const [table, column, type] of ADDED_COLUMNS) {

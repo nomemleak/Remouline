@@ -1,7 +1,8 @@
 // Compilation flags of an assignment: one default set (e.g.
 // "-std=c99 -pedantic -Werror -Wall -Wextra -Wvla") and per-exercise exceptions
 // (e.g. an exercise allowed to drop -std=c99 to use getline). Text format, used both
-// in the admin panel and in the "remouline/flags.txt" file of a testsuite bundle:
+// in the admin panel and in the "remouline/flags.txt" file of a testsuite bundle
+// (docs/BUNDLE-FORMAT.md):
 //
 //   default: -std=c99 -pedantic -Werror -Wall -Wextra -Wvla
 //   file_io: -pedantic -Werror -Wall -Wextra -Wvla
@@ -9,10 +10,8 @@
 //
 // An exercise is matched by its folder name ("file_io") or its path
 // ("Fundamentals/file_io"). "makefile" means the assignment provides or requires a
-// Makefile for that folder: the pipeline builds programs with it and reads the
-// compilation flags from it. "default: makefile" (stored as "*: makefile") applies it
-// to every folder that has a Makefile. Without such a line, a student's Makefile is
-// never run.
+// Makefile in that folder: the pipeline builds programs with it and reads the
+// compilation flags from it. Without that line, a student's Makefile is never run.
 import { config } from './config.js';
 
 const FLAG_RE = /^-[A-Za-z0-9_=+.,:-]+$/;
@@ -20,7 +19,6 @@ const FLAG_RE = /^-[A-Za-z0-9_=+.,:-]+$/;
 const FORBIDDEN = /^-(o|B|wrapper|fplugin|specs|x|E|S|c|M)/;
 const KEY_RE = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
 export const MAKEFILE = 'makefile';
-export const ALL_FOLDERS = '*';
 
 const fail = (message) => Object.assign(new Error(message), { status: 400 });
 
@@ -36,7 +34,7 @@ export function parseFlagList(text) {
 /** "default: ..." + "<exercise>: ..." lines -> { defaultFlags: string|null, overrides: string } */
 export function parseFlagsFile(text) {
   let defaultFlags = null;
-  const overrides = [];
+  const overrides = new Map();
   for (const raw of String(text ?? '').split(/\r?\n/)) {
     const line = raw.replace(/#.*$/, '').trim();
     if (!line) continue;
@@ -45,19 +43,22 @@ export function parseFlagsFile(text) {
     const key = m[1].trim();
     const value = m[2].trim();
     const makefile = value.toLowerCase() === MAKEFILE;
-    if ((key === 'default' || key === ALL_FOLDERS) && makefile) {
-      if (!overrides.includes(`${ALL_FOLDERS}: ${MAKEFILE}`)) overrides.push(`${ALL_FOLDERS}: ${MAKEFILE}`);
-    } else if (key === 'default') {
+    if (key === 'default') {
+      if (makefile) {
+        throw fail('"makefile" names the folder that has the Makefile: write one line per folder '
+          + '("fundamentals: makefile") and keep "default:" for compilation flags.');
+      }
+      if (defaultFlags !== null) throw fail('"default:" is given twice.');
       defaultFlags = parseFlagList(value).join(' ');
-    } else if (key === ALL_FOLDERS) {
-      throw fail('"*" only takes "makefile" ("*: makefile"); put flags in "default:".');
     } else if (!KEY_RE.test(key)) {
       throw fail(`Invalid exercise name in flags: ${key}`);
+    } else if (overrides.has(key)) {
+      throw fail(`"${key}:" is given twice.`);
     } else {
-      overrides.push(`${key}: ${makefile ? MAKEFILE : parseFlagList(value).join(' ')}`);
+      overrides.set(key, makefile ? MAKEFILE : parseFlagList(value).join(' '));
     }
   }
-  return { defaultFlags, overrides: overrides.join('\n') };
+  return { defaultFlags, overrides: [...overrides].map(([key, value]) => `${key}: ${value}`).join('\n') };
 }
 
 /** Normalizes the overrides text typed in the admin panel (throws on invalid input). */
@@ -67,7 +68,11 @@ export function normalizeOverrides(text) {
   return overrides;
 }
 
-/** Config file handed to the pipeline (runner/pipeline.py reads /work/config.json). */
+/**
+ * Config file handed to the pipeline (runner/pipeline.py reads /work/config.json), from the
+ * assignment's current (draft) flags. `tests`, set at publication, lists the tests as Criterion
+ * listed them during validation.
+ */
 export function pipelineConfig(assignment) {
   const overrides = {};
   const makefile = [];
@@ -82,4 +87,29 @@ export function pipelineConfig(assignment) {
     overrides,
     makefile,
   };
+}
+
+/**
+ * Config frozen at publication: the validated flags, plus the tests Criterion listed on the
+ * "zero" empty implementation, so a student's failed build lists exactly the tests a
+ * successful one runs.
+ */
+export function freezeConfig(assignment, validationResults) {
+  const tests = validationResults
+    .filter((r) => r.category_path.startsWith('Testsuite/'))
+    .map((r) => [r.category_path, r.test_name]);
+  return { ...pipelineConfig(assignment), tests };
+}
+
+/** What student pushes are graded with: the config frozen at publication. */
+export function publishedConfig(assignment) {
+  if (assignment?.published_config) return JSON.parse(assignment.published_config);
+  return pipelineConfig(assignment); // published before this snapshot existed
+}
+
+/** True when the draft flags are no longer the ones frozen at publication. */
+export function draftFlagsDiffer(assignment) {
+  if (!assignment?.published_config) return false;
+  const { default_flags, overrides, makefile } = JSON.parse(assignment.published_config);
+  return JSON.stringify(pipelineConfig(assignment)) !== JSON.stringify({ default_flags, overrides, makefile });
 }

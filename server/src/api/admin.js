@@ -21,7 +21,7 @@ import { getResults } from '../results.js';
 import { enqueueSubmission } from '../queue.js';
 import { startValidation, canValidate, REFERENCE_STUDENT } from '../validation.js';
 import { listReports, setReportStatus } from '../reports.js';
-import { parseFlagList, parseFlagsFile, normalizeOverrides } from '../flags.js';
+import { parseFlagList, parseFlagsFile, normalizeOverrides, freezeConfig, draftFlagsDiffer } from '../flags.js';
 import { pushCommand } from '../push-command.js';
 import {
   ACCESS_MODES, getAccessMode, setAccessMode, createInvitation, listInvitations, revokeInvitation,
@@ -77,9 +77,10 @@ function assignmentPayload(assignment, role = 'maintainer') {
   if (role !== 'maintainer') return assignmentSummary(assignment);
   const d = dirs(assignment.slug);
   const staging = readTextFiles(d.staging);
+  const { published_config: _frozen, ...fields } = assignment;
   return {
     assignment: {
-      ...assignment,
+      ...fields,
       validation_report: assignment.validation_report ? JSON.parse(assignment.validation_report) : null,
     },
     stagingFiles: staging,
@@ -90,7 +91,7 @@ function assignmentPayload(assignment, role = 'maintainer') {
     attestation: { version: ATTESTATION_VERSION, text: ATTESTATION_TEXT },
     publishedFiles: listFiles(d.tests),
     preview: previewTests(staging),
-    stagingDiffersFromPublished: contentHash(d.staging) !== contentHash(d.tests),
+    stagingDiffersFromPublished: contentHash(d.staging) !== contentHash(d.tests) || draftFlagsDiffer(assignment),
   };
 }
 
@@ -250,10 +251,9 @@ adminRouter.put('/assignments/:slug/bundle', maintainer, wrap(async (req, res) =
     db()
       .prepare(
         `UPDATE assignments SET compile_flags = COALESCE(?, compile_flags), flag_overrides = ?,
-           flags_source = CASE WHEN ? IS NULL AND ? IS NULL THEN flags_source ELSE 'bundle' END WHERE slug = ?`,
+           flags_source = CASE WHEN ? IS NULL THEN flags_source ELSE 'bundle' END WHERE slug = ?`,
       )
-      .run(parsedFlags.defaultFlags, parsedFlags.overrides || null, parsedFlags.defaultFlags,
-        parsedFlags.overrides || null, assignment.slug);
+      .run(parsedFlags.defaultFlags, parsedFlags.overrides || null, parsedFlags.defaultFlags, assignment.slug);
   }
   db()
     .prepare('INSERT INTO testsuite_attestations (assignment, maintainer, statement_version, content_hash) VALUES (?, ?, ?, ?)')
@@ -302,8 +302,12 @@ adminRouter.post('/assignments/:slug/publish', maintainer, (req, res) => {
   if (report.contentHash !== validationHash(assignment.slug)) {
     return fail(res, 409, 'Files changed since the last validation. Re-run the validation first.');
   }
+  // Students are graded with the validated tests AND the flags they were validated with.
+  const frozen = JSON.stringify(freezeConfig(assignment, getResults(report.stubSubmissionId)));
   publishStagingTests(assignment.slug);
-  db().prepare("UPDATE assignments SET status = 'published', published_at = COALESCE(published_at, ?) WHERE slug = ?").run(now(), assignment.slug);
+  db()
+    .prepare("UPDATE assignments SET status = 'published', published_at = COALESCE(published_at, ?), published_config = ? WHERE slug = ?")
+    .run(now(), frozen, assignment.slug);
   audit(req.admin, `published ${assignment.slug}${force ? ` DESPITE a failed validation (${report.blocking?.length ?? 0} problem(s))` : ''}`, { assignment: assignment.slug });
   res.json(assignmentPayload(getAssignment(assignment.slug)));
 });

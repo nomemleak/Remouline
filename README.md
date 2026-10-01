@@ -175,8 +175,10 @@ flowchart LR
    runs, with the current files) as JSON. Fix the tests and import only the changed files with
    *Update only these files*. Rare false positives can be overridden with **Publish anyway**
    (recorded in the activity log).
-5. **Publish**. Users can then report a test as wrong; everyone who pushed on the assignment votes.
-   Maintainers answer each report, and can export them as JSON.
+5. **Publish**: the validated tests and the flags they were validated with are frozen for users;
+   later edits only reach them once validated and published again. Users can then report a test as
+   wrong; everyone who pushed on the assignment votes. Maintainers answer each report, and can
+   export them as JSON.
 
 <p align="center">
   <img src="docs/assets/screenshot-validation.png" alt="Failed validation with its problems and the JSON export" width="440">
@@ -194,7 +196,7 @@ Test files mirror the assignment's folders:
 ```
 Fundamentals/test_address_book.c                    -> Fundamentals/address_book.c (+ .h)
 Fundamentals/preflight_check/test_preflight_check.c -> exercise folder Fundamentals/preflight_check/
-Programs/shout/test_shout.c                         -> Makefile in the folder: `make`, tests run ./shout
+Programs/shout/test_shout.c                         -> program exercise: tests run ./shout
 fundamentals/test_physics.c                         -> project folder fundamentals/ (src/, include/, Makefile)
 ```
 
@@ -209,6 +211,10 @@ fundamentals/test_physics.c                         -> project folder fundamenta
   `.c` files into the build. A top-level `include/` folder is on every include path.
 - Helper functions a testsuite provides to users are defined in the test files and never redefined
   by the empty implementations.
+- A test file that does not compile with the user's headers (missing prototype, wrong type) fails
+  that exercise's build with an explicit message; during validation it blocks the testsuite.
+- A failed build still lists every test of the exercise (as skipped), so totals are the same for
+  everyone.
 - Tests create their own data files (CSV, binary...) and run with the exercise folder as working
   directory.
 
@@ -223,14 +229,13 @@ Each assignment has **its own** flags, used for user code (never for test files)
 
 - **Default flags** from `remouline/flags.txt` in the bundle (`default: ...`).
 - **Per-exercise exceptions** (`<exercise>: <flags>`), also editable in *Tests & publishing*;
-  changing them re-runs the validation.
+  changing them re-runs the validation, and users get them at the next publication.
 - The page shows where the flags come from (bundle or admin panel) and warns when the server
   fallback `DEFAULT_COMPILE_FLAGS` is used.
 - Libraries are passed at link time (`-l*`, `-pthread`, always `-lm`). Dangerous flags (`-o`, `-B`,
   `-fplugin`...) are refused.
 - `<folder>: makefile` when the assignment provides a Makefile: programs are built with it and the
-  flags are read from it (`make -n`); `default: makefile` for every folder that has one. Without such a
-  line, a submitted Makefile is never run.
+  flags are read from it (`make -n`). Without that line, a submitted Makefile is never run.
 
 </details>
 

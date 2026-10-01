@@ -85,12 +85,12 @@ async function forceRemove(name) {
  * @param {string} opts.slug
  * @param {string} opts.submissionDir  folder containing the CONTENT of <slug>/
  * @param {string} opts.testsDir       folder containing the Criterion files for this assignment
- * @param {object} [opts.compileConfig]  { default_flags, overrides } (see flags.js)
+ * @param {object} [opts.compileConfig]  { default_flags, overrides, makefile, tests? } (see flags.js)
  * @param {(line: string) => void} opts.log
- * @param {boolean} [opts.valgrind]    false for validation runs (pass/fail is all that matters)
+ * @param {boolean} [opts.validation]  run on the empty implementations (see validation.js)
  * @returns {Promise<object>} the parsed report.json (see runner/pipeline.py)
  */
-export async function runCorrection({ jobId, slug, submissionDir, testsDir, compileConfig, log, valgrind = true }) {
+export async function runCorrection({ jobId, slug, submissionDir, testsDir, compileConfig, log, validation = false }) {
   const root = path.join(config.jobsDir, jobId);
   const work = path.join(root, 'work');
   const name = `job-${jobId}`;
@@ -114,7 +114,7 @@ export async function runCorrection({ jobId, slug, submissionDir, testsDir, comp
       'python3', '/opt/remouline/pipeline.py',
       '--work', '/work',
       '--slug', slug,
-      ...(valgrind ? [] : ['--no-valgrind']),
+      ...(validation ? ['--validation'] : []),
     ];
     log(`starting container ${name} (image ${config.runnerImage})`);
     const res = await run('docker', args, {

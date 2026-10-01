@@ -25,7 +25,7 @@ Test files mirror the exercise folders:
 ```
 Fundamentals/test_add_numbers.c                  tests Fundamentals/add_numbers.c (+ .h)
 Fundamentals/count_chars/test_count_chars.c      tests the exercise folder Fundamentals/count_chars/
-Programs/shout/test_shout.c                      runs ./shout, built with the folder's Makefile
+Programs/shout/test_shout.c                      runs ./shout, compiled from the folder's .c files
 headers/Fundamentals/count_chars/count_chars.h   header users write in Fundamentals/count_chars/
 ```
 
@@ -97,17 +97,22 @@ fundamentals: makefile
 - `<folder>: makefile` the assignment provides or requires a Makefile for that folder: programs run
   by the tests (`./name`) are built with `make`, and unit tests are compiled with the flags of the
   compile commands `make -n` prints (`-I`, `-o`, `-l` and sanitizer options are handled by the
-  pipeline). `default: makefile` does this for every folder that has a Makefile. **Without such a
-  line, a Makefile found in a submission is never run**;
-- `#` starts a comment. Flags that could redirect output or load code (`-o`, `-B`, `-fplugin`...)
-  are refused. Libraries (`-l*`, `-pthread`) are passed at link time; `-lm` is always added.
+  pipeline). One line per folder that has a Makefile; `default:` always holds flags. **Without
+  such a line, a Makefile found in a submission is never run**;
+- `#` starts a comment. Each key appears once. Flags that could redirect output or load code
+  (`-o`, `-B`, `-fplugin`...) are refused. Libraries (`-l*`, `-pthread`) are passed at link time;
+  `-lm` is always added.
 
-Without this file, the assignment uses `DEFAULT_COMPILE_FLAGS` and the admin panel flags it.
+Without a `default:` line, the assignment uses `DEFAULT_COMPILE_FLAGS` and the admin panel flags it.
+Test files are always compiled without these flags, but a call to a function the header does not
+declare, or a wrong pointer/integer type, is an error.
 
 ## Writing good tests
 
 - One Criterion suite per function (`Test(<function>, <case>)`): validation expects every suite to
   have at least one test failing on an empty implementation.
+- Write each test with `Test(...)` / `ParameterizedTest(...)` directly, not through a helper macro,
+  so the preview lists it before validation.
 - Every assertion has an explicit, readable message (`cr_assert(x == 2, "Expected 2 but got %d", x)`):
   messages of the form `Expected X but got Y` are shown as expected / actual with a diff.
 - Cover the edge cases the assignment implies: NULL, empty strings, size 0, negative values.

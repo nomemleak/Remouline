@@ -122,14 +122,16 @@ function CompilationFlags({ data, onSave, busy }: { data: AssignmentPayload; onS
       </div>
       <p className="small muted">
         Each assignment has its own flags, used to compile student code (not the test files). They normally come
-        from <code>remouline/flags.txt</code> in the bundle; edit them here only to check or fix them. When the
+        from <code>remouline/flags.txt</code> in the bundle; edit them here only to check or fix them (students get
+        the change once it is validated and published again). When the
         assignment provides a <code>Makefile</code> for a folder, write <code>folder: makefile</code>: programs are
         built with it and the flags are read from it. Without that line, students&apos; Makefiles are never run.
       </p>
       {source === 'fallback' ? (
         <div className="notice small">
-          The bundle gave no flags: the server fallback (<code>DEFAULT_COMPILE_FLAGS</code>) is used. Check the flags the
-          assignment requires and set them below.
+          The bundle gave no <code>default:</code> line: the server fallback (<code>DEFAULT_COMPILE_FLAGS</code>) is
+          used for every folder without its own flags or Makefile. Check the flags the assignment requires and set
+          them below.
         </div>
       ) : null}
       <label className="field">
@@ -137,8 +139,7 @@ function CompilationFlags({ data, onSave, busy }: { data: AssignmentPayload; onS
         <input className="input mono" value={flags} onChange={(e) => setFlags(e.target.value)} />
       </label>
       <label className="field">
-        Exceptions, one per line: <code>exercise_folder: flags</code>, <code>folder: makefile</code>, or
-        <code>*: makefile</code> for every folder that has a Makefile
+        Exceptions, one per line: <code>exercise_folder: flags</code> or <code>folder: makefile</code>
         <textarea className="textarea" style={{ minHeight: 70 }} value={overrides} onChange={(e) => setOverrides(e.target.value)}
           placeholder={'file_io: -pedantic -Werror -Wall -Wextra -Wvla\nfundamentals: makefile'} />
       </label>
@@ -361,9 +362,10 @@ export function TestsManager({ initial }: { initial: AssignmentPayload }) {
 
       <Step n={3} title="Publish" done={data.assignment.status === 'published' && !data.stagingDiffersFromPublished}>
         <p className="small muted">
-          Publishing copies the validated tests to <code>tp-{slug}/tests/</code> and opens the assignment to students.
+          Publishing copies the validated tests to <code>tp-{slug}/tests/</code>, freezes the compilation flags they
+          were validated with, and opens the assignment to students.
           {data.assignment.status === 'published' && data.stagingDiffersFromPublished
-            ? ' The draft tests differ from the published ones: publish again to update them.'
+            ? ' The draft tests or flags differ from the published ones: publish again to update them.'
             : ''}
         </p>
         <div className="row">
