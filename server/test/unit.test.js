@@ -6,7 +6,7 @@ import path from 'node:path';
 import { findTests, categoryPartsForTestFile, previewTests } from '../src/criterion-parser.js';
 import { resolveSlug, safeRelativePath, isValidSlug } from '../src/assignments.js';
 import { hashToken } from '../src/tokens.js';
-import { parsePrototypes, stubDefinition, binariesUsed, functionsDefinedIn } from '../src/stubs.js';
+import { parsePrototypes, stubDefinition, binariesUsed, functionsDefinedIn, generateStubSubmission } from '../src/stubs.js';
 import { parseFlagsFile, parseFlagList, pipelineConfig } from '../src/flags.js';
 import { judge } from '../src/validation.js';
 
@@ -152,4 +152,23 @@ test('invitation tokens are hashed deterministically', () => {
   assert.equal(hashToken('abc'), hashToken('abc'));
   assert.notEqual(hashToken('abc'), 'abc');
   assert.equal(hashToken('abc').length, 64);
+});
+
+test('project layout: one empty implementation for the whole project', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stub-project-'));
+  const write = (rel, content) => {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), content);
+  };
+  write('headers/fundamentals/include/physics.h', 'double speed(double d, double t);');
+  write('headers/fundamentals/include/records.h', 'int count_records(const char *path);\nvoid free_points(int *p);');
+  write('tests/fundamentals/test_physics.c', 'Test(speed, simple) {}');
+  write('tests/fundamentals/test_records.c', 'Test(count_records, file) {}');
+  const out = path.join(dir, 'stub');
+  const { voidFunctions } = generateStubSubmission(path.join(dir, 'tests'), path.join(dir, 'headers'), out);
+  const stub = fs.readFileSync(path.join(out, 'fundamentals/src/remouline_stub.c'), 'utf8');
+  for (const name of ['speed', 'count_records', 'free_points']) assert.equal(stub.split(`${name}(`).length - 1, 1, `${name} defined once`);
+  assert.ok(fs.existsSync(path.join(out, 'fundamentals/include/physics.h')), 'headers copied where students have them');
+  assert.deepEqual(voidFunctions, ['free_points']);
+  fs.rmSync(dir, { recursive: true, force: true });
 });

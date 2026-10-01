@@ -238,6 +238,20 @@ export function generateStubSubmission(testsDir, headersDir, outDir, variant = '
     const useFolder = inOwnFolder || folderHeaders.length > 0;
     const targetDir = useFolder ? folder : relDir;
     const scope = headers.filter((h) => path.posix.dirname(h) === (targetDir || '.'));
+
+    // Project layout (e.g. fundamentals/include/*.h, one test file per module): ONE empty
+    // implementation for the whole project, built from every header under it.
+    const projectHeaders = relDir ? headers.filter((h) => h.startsWith(`${relDir}/`)) : [];
+    if (!useFolder && scope.length === 0 && projectHeaders.length > 0) {
+      const projectTarget = `${relDir}/src/remouline_stub.c`;
+      if (done.has(projectTarget)) continue;
+      done.add(projectTarget);
+      const protos = projectHeaders.flatMap((h) => parsePrototypes(fs.readFileSync(path.join(headersDir, h), 'utf8')));
+      const unique = [...new Map(protos.filter((p) => !providedByTests.has(p.name)).map((p) => [p.name, p])).values()];
+      write(outDir, projectTarget, stubSource(projectHeaders, unique, variant));
+      notes.push(`${projectTarget}: ${unique.length} empty function(s) for the ${relDir}/ project`);
+      continue;
+    }
     const target = useFolder ? `${folder}/${exercise}_stub.c` : `${[relDir, exercise].filter(Boolean).join('/')}.c`;
     if (done.has(target)) continue;
     done.add(target);

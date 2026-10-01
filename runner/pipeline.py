@@ -41,6 +41,7 @@ SANITIZER_ENV = {
 
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 MAIN_RE = re.compile(r"^\s*int\s+main\s*\(", re.MULTILINE)
+CRITERION_RE = re.compile(r"#\s*include\s*<criterion/")
 TEST_RE = re.compile(r"\bTest\s*\(\s*([A-Za-z_]\w*)\s*,\s*([A-Za-z_]\w*)")
 PARAM_TEST_RE = re.compile(r"\b(?:ParameterizedTest|Theory)\s*\(\s*(?:\([^)]*\)|[^,]+?)\s*,\s*([A-Za-z_]\w*)\s*,\s*([A-Za-z_]\w*)")
 
@@ -196,11 +197,22 @@ class Unit:
                 self.exercise_rel = candidate or "."
                 break
         self.mode = None
+        # Project layout: the test file sits in a project folder (e.g. fundamentals/, with
+        # src/ and include/, often a Makefile) and tests several of its modules, one test
+        # file per module (test_physics.c, test_records.c...): every .c of the project counts.
+        self.project = (
+            self.exercise_dir is not None
+            and self.exercise_rel == (self.rel_dir or ".")
+            and self.exercise_dir.name != self.exercise
+            and not (self.exercise_dir / (self.exercise + ".c")).exists()
+            and ((self.exercise_dir / "src").is_dir() or (self.exercise_dir / "include").is_dir())
+        )
         if self.exercise_dir is not None:
-            # makefile: the student's Makefile builds it; program: no Makefile but the tests run
-            # "./binary" (we compile the folder into it); functions: unit tests linked with the code.
+            # makefile: the tests run "./binary" built by the student's Makefile; program: same
+            # without a Makefile (we compile the folder into it); functions: unit tests linked
+            # with the student's code (even when the folder has a Makefile).
             self.binaries = binaries_used(self.test_file.read_text(errors="replace"))
-            if (self.exercise_dir / "Makefile").exists():
+            if self.binaries and (self.exercise_dir / "Makefile").exists():
                 self.mode = "makefile"
             elif self.binaries:
                 self.mode = "program"
@@ -262,13 +274,45 @@ class Builder:
                     extra.append(src)
         return extra
 
-    def shared_includes(self):
-        """A top-level include/ folder (common layout) is visible to every exercise."""
-        folder = self.submission / "include"
-        return ["-I", str(folder)] if folder.is_dir() else []
+    def shared_includes(self, unit=None):
+        """A top-level include/ folder (common layout) is visible to every exercise, and so
+        is every folder holding headers inside a project."""
+        folders = []
+        if (self.submission / "include").is_dir():
+            folders.append(self.submission / "include")
+        if unit is not None and unit.project:
+            folders += self.project_header_dirs(unit)
+        flags = []
+        for folder in folders:
+            flags += ["-I", str(folder)]
+        return flags
+
+    def project_header_dirs(self, unit):
+        dirs = []
+        for header in sorted(unit.exercise_dir.rglob("*.h")):
+            if header.parent not in dirs and not any(p.startswith(".") for p in header.relative_to(unit.exercise_dir).parts):
+                dirs.append(header.parent)
+            if len(dirs) >= 20:
+                break
+        return dirs
+
+    def project_sources(self, unit, with_main=False):
+        """Every .c of a project folder, except test files (and main() unless asked)."""
+        sources = []
+        for src in sorted(unit.exercise_dir.rglob("*.c")):
+            if any(p.startswith(".") for p in src.relative_to(unit.exercise_dir).parts):
+                continue
+            text = src.read_text(errors="replace")
+            if CRITERION_RE.search(text) or (not with_main and MAIN_RE.search(text)):
+                continue
+            sources.append(src)
+        return sources
 
     def sources_for(self, unit):
         """Student sources of a function-style exercise."""
+        if unit.project:
+            sources = self.project_sources(unit)
+            return sources, None if sources else "No source file found in %s/." % unit.exercise_rel
         own_file = unit.exercise_dir / (unit.exercise + ".c")
         if unit.exercise_dir.name == unit.exercise:
             # Exercise folder: every .c file of the folder, except the ones defining main().
@@ -295,7 +339,7 @@ class Builder:
         extra = ASAN_FLAGS if variant == "asan" else []
         for index, src in enumerate(sources):
             obj = out_dir / ("%d_%s.o" % (index, src.stem))
-            cmd = ["gcc", *flags, "-g", *extra, "-I", str(src.parent), *self.shared_includes(),
+            cmd = ["gcc", *flags, "-g", *extra, "-I", str(src.parent), *self.shared_includes(unit),
                    "-c", str(src), "-o", str(obj)]
             res = run(cmd, timeout=BUILD_TIMEOUT)
             display = " ".join(["gcc", *flags, "-c", str(src.relative_to(self.submission))])
@@ -338,14 +382,14 @@ class Builder:
         key = "program:%s" % unit.exercise_dir
         if key in self.make_cache:
             return self.make_cache[key]
-        sources = sorted(unit.exercise_dir.glob("*.c"))
+        sources = self.project_sources(unit, with_main=True) if unit.project else sorted(unit.exercise_dir.glob("*.c"))
         sources += self.linked_sources(unit, sources)
         flags = self.flags_for(unit)
         logs, ok = [], bool(sources)
         if not sources:
             logs.append("No source file found in %s/." % unit.exercise_rel)
         for name in unit.binaries if sources else []:
-            cmd = ["gcc", *flags, "-g", "-I", str(unit.exercise_dir), *self.shared_includes(),
+            cmd = ["gcc", *flags, "-g", "-I", str(unit.exercise_dir), *self.shared_includes(unit),
                    *[str(s) for s in sources], "-o", str(unit.exercise_dir / name), *self.link_flags(unit)]
             res = run(cmd, timeout=BUILD_TIMEOUT)
             shown = " ".join(str(s.relative_to(self.submission)) for s in sources)
@@ -373,6 +417,8 @@ class Builder:
             include_dirs.append(self.submission / "include")
         if unit.rel_dir and (self.submission / unit.rel_dir).is_dir():
             include_dirs.append(self.submission / unit.rel_dir)
+        if unit.project:
+            include_dirs += self.project_header_dirs(unit)
         logs = []
 
         if unit.mode == "makefile":

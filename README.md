@@ -195,12 +195,15 @@ Test files mirror the assignment's folders:
 Fundamentals/test_address_book.c                    -> Fundamentals/address_book.c (+ .h)
 Fundamentals/preflight_check/test_preflight_check.c -> exercise folder Fundamentals/preflight_check/
 Programs/shout/test_shout.c                         -> Makefile in the folder: `make`, tests run ./shout
+fundamentals/test_physics.c                         -> project folder fundamentals/ (src/, include/, Makefile)
 ```
 
 - The exercise name is the file name without `test_` / `_test`. The result tree path is
   `Testsuite/<folders>/<exercise>/<Criterion suite>/<test name>`.
-- Exercise folder with a `Makefile` → `make`. No Makefile but the tests run `./name` → every `.c` of
-  the folder is compiled into `name`. Otherwise → unit tests linked with the user's sources.
+- Tests that run `./name`: the folder's `Makefile` builds it (`make`), or without a Makefile every
+  `.c` of the folder is compiled into `name`. Otherwise → unit tests linked with the user's sources.
+- Project folders (`src/`, `include/`, often a `Makefile`) tested module by module: every `.c` of the
+  project except `main()` is linked with each test file, with every header folder on the include path.
 - A header including another exercise's header (`#include "../fleet/fleet.h"`) pulls that folder's
   `.c` files into the build. A top-level `include/` folder is on every include path.
 - Helper functions a testsuite provides to users are defined in the test files and never redefined

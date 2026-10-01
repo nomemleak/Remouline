@@ -29,6 +29,21 @@ Programs/shout/test_shout.c                      runs ./shout, built with the fo
 headers/Fundamentals/count_chars/count_chars.h   header users write in Fundamentals/count_chars/
 ```
 
+**Project layout.** When an assignment part is a project folder (with `src/` and/or `include/`,
+often a `Makefile`) tested module by module, put the test files directly in that folder:
+
+```
+fundamentals/test_physics.c                      tests the fundamentals/ project
+fundamentals/test_records.c                      same project, another module
+headers/fundamentals/include/physics.h           headers users write in fundamentals/include/
+headers/fundamentals/include/records.h
+```
+
+Every `.c` of the project is compiled and linked with the tests, except the file defining `main()`;
+every folder holding headers is on the include path, and the tests run with the project folder as
+working directory (so `data/...` paths work). Validation builds one empty implementation for the
+whole project. Tests that run a program (`./name`) use the project's `Makefile` instead.
+
 ## Single document
 
 Paste it in *Tests & publishing*, or upload it as one `.txt` file. Every file starts with a marker
