@@ -4,8 +4,13 @@
 const TEST_RE = /\bTest\s*\(\s*([A-Za-z_]\w*)\s*,\s*([A-Za-z_]\w*)/g;
 const PARAM_TEST_RE = /\b(?:ParameterizedTest|Theory)\s*\(\s*(?:\([^)]*\)|[^,]+?)\s*,\s*([A-Za-z_]\w*)\s*,\s*([A-Za-z_]\w*)/g;
 
+// Comments and preprocessor lines (with their "\" continuations) are ignored, so a helper
+// macro such as "#define TIMED(suite, name) Test(suite, name, .timeout = 2)" is not a test.
 function stripComments(source) {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/^[ \t]*#(?:[^\n]*\\\r?\n)*[^\n]*/gm, '');
 }
 
 export function findTests(source) {

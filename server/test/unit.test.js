@@ -17,6 +17,8 @@ test('findTests detects Test and ParameterizedTest, ignores comments', () => {
     Test(suite_a, first) {}
     Test( suite_a , second, .timeout = 2) {}
     ParameterizedTest(struct param *p, suite_b, params) {}
+    #define TIMED(suite, name) \\
+        Test(suite, name, .timeout = 2)
   `;
   assert.deepEqual(findTests(src), [
     { suite: 'suite_a', name: 'first' },

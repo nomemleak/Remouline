@@ -250,9 +250,10 @@ adminRouter.put('/assignments/:slug/bundle', maintainer, wrap(async (req, res) =
     db()
       .prepare(
         `UPDATE assignments SET compile_flags = COALESCE(?, compile_flags), flag_overrides = ?,
-           flags_source = CASE WHEN ? IS NULL THEN flags_source ELSE 'bundle' END WHERE slug = ?`,
+           flags_source = CASE WHEN ? IS NULL AND ? IS NULL THEN flags_source ELSE 'bundle' END WHERE slug = ?`,
       )
-      .run(parsedFlags.defaultFlags, parsedFlags.overrides || null, parsedFlags.defaultFlags, assignment.slug);
+      .run(parsedFlags.defaultFlags, parsedFlags.overrides || null, parsedFlags.defaultFlags,
+        parsedFlags.overrides || null, assignment.slug);
   }
   db()
     .prepare('INSERT INTO testsuite_attestations (assignment, maintainer, statement_version, content_hash) VALUES (?, ?, ?, ?)')

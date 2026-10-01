@@ -142,8 +142,10 @@ def leaf(category_path, test_name, status, **fields):
 # Test discovery + exercise mapping (keep identical to server/src/criterion-parser.js)
 # ---------------------------------------------------------------------------
 def strip_comments(source):
+    """Comments and preprocessor lines (with their "\\" continuations) are ignored."""
     source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
-    return re.sub(r"//[^\n]*", "", source)
+    source = re.sub(r"//[^\n]*", "", source)
+    return re.sub(r"^[ \t]*#(?:[^\n]*\\\r?\n)*[^\n]*", "", source, flags=re.MULTILINE)
 
 
 def static_tests(source):
