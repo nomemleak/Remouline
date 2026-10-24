@@ -58,6 +58,9 @@ def sanitizer_error(raw):
     """A memory error or undefined behavior (a leak report alone is not one)."""
     return "ERROR: AddressSanitizer" in raw or "runtime error" in raw
 
+# A function definition: "type name(params) {" (same idea as server/src/stubs.js functionsDefinedIn).
+DEFINITION_RE = re.compile(r"(?:^|[;}])\s*(?!(?:if|for|while|switch|return|else|do)\b)[A-Za-z_][\w\s*]*?[\s*]"
+                           r"(?!(?:if|for|while|switch|return|sizeof)\b)([A-Za-z_]\w*)\s*\((?:[^;{}()]|\([^()]*\))*\)\s*\{")
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 MAIN_RE = re.compile(r"^\s*int\s+main\s*\(", re.MULTILINE)
 CRITERION_RE = re.compile(r"#\s*include\s*<criterion/")
@@ -308,6 +311,20 @@ NOT_KEPT = ("-c", "-I", "-L", "-l", "-M", "-o", "-fsanitize", "-fno-sanitize", "
             "-specs", "-isystem", "-iquote", "-include")
 
 
+PATH_OPTIONS = ("-iquote", "-isystem", "-I", "-L")
+UNDEFINED_RE = re.compile(r"undefined reference to [`']([A-Za-z_]\w*)'")
+MULTIPLE_RE = re.compile(r"multiple definition of [`']([A-Za-z_]\w*)'")
+MISSING_HEADER_RE = re.compile(r"fatal error: ([^:\s]+): No such file or directory")
+
+
+def path_option(flag):
+    """("-I", "includes") for "-Iincludes" (server/src/flags.js joins "-I includes/")."""
+    for option in PATH_OPTIONS:
+        if flag.startswith(option) and len(flag) > len(option):
+            return option, flag[len(option):]
+    return None, None
+
+
 def has_makefile(folder):
     return any((folder / name).is_file() for name in ("Makefile", "makefile", "GNUmakefile"))
 
@@ -378,6 +395,33 @@ class Builder:
         else:
             flags = next((self.overrides[k] for k in unit.keys if k in self.overrides), flags)
         return [f for f in flags if not f.startswith(("-fsanitize", "-fno-sanitize"))]
+
+    def localize(self, flags, unit):
+        """Folder options ("-Iincludes") are relative to the assignment folder, as when the
+        subject's command is run from it; the exercise folder is searched too. Folders outside
+        the submission are dropped."""
+        out = []
+        root = self.submission.resolve()
+        for flag in flags:
+            option, folder = path_option(flag)
+            if option is None:
+                out.append(flag)
+                continue
+            for base in dict.fromkeys([self.submission, unit.exercise_dir or self.submission]):
+                resolved = (base / folder).resolve()
+                if (resolved == root or root in resolved.parents) and option + str(resolved) not in out:
+                    out.append(option + str(resolved))
+        return out
+
+    def flag_include_dirs(self, unit):
+        """Header folders named by the assignment's -I / -iquote / -isystem flags: the tests
+        include their headers from there, like the user's code."""
+        dirs = []
+        for flag in self.localize(self.flags_for(unit), unit):
+            option, folder = path_option(flag)
+            if option in ("-I", "-iquote", "-isystem") and Path(folder) not in dirs:
+                dirs.append(Path(folder))
+        return dirs
 
     def makefile_flags(self, unit):
         """Compilation flags of the folder's Makefile, read from `make -n` (nothing is built).
@@ -480,7 +524,8 @@ class Builder:
 
     def compile_objects(self, unit, sources, variant):
         # Libraries (-lm...) only matter at link time (see link_flags).
-        flags = [f for f in self.flags_for(unit) if not f.startswith("-l")]
+        shown = [f for f in self.flags_for(unit) if not f.startswith(("-l", "-L"))]
+        flags = self.localize(shown, unit)
         key = (tuple(str(s) for s in sources), variant, tuple(flags))
         if key in self.obj_cache:
             return self.obj_cache[key]
@@ -490,10 +535,13 @@ class Builder:
         extra = ASAN_FLAGS if variant == "asan" else []
         for index, src in enumerate(sources):
             obj = out_dir / ("%d_%s.o" % (index, src.stem))
-            cmd = ["gcc", *flags, "-g", *extra, "-I", str(src.parent), *self.shared_includes(unit),
+            # A main() left in the exercise file (e.g. given with a debugging exercise) would replace
+            # Criterion's: it is renamed in the test build only.
+            rename = ["-Dmain=remouline_user_main"] if MAIN_RE.search(src.read_text(errors="replace")) else []
+            cmd = ["gcc", *flags, *rename, "-g", *extra, "-I", str(src.parent), *self.shared_includes(unit),
                    "-c", str(src), "-o", str(obj)]
             res = run(cmd, timeout=BUILD_TIMEOUT)
-            display = " ".join(["gcc", *flags, "-c", str(src.relative_to(self.submission))])
+            display = " ".join(["gcc", *shown, "-c", str(src.relative_to(self.submission))])
             logs.append("$ %s\n%s" % (display, res["output"] or ""))
             if res["code"] != 0:
                 ok = False
@@ -540,7 +588,7 @@ class Builder:
     def link_flags(self, unit):
         """Libraries must also be given at link time: -l*, -pthread from the flags, plus -lm
         (math.h functions) which never hurts."""
-        flags = [f for f in self.flags_for(unit) if f.startswith("-l") or f == "-pthread"]
+        flags = [f for f in self.localize(self.flags_for(unit), unit) if f.startswith(("-l", "-L")) or f == "-pthread"]
         return flags + ([] if "-lm" in flags else ["-lm"])
 
     def build_program(self, unit):
@@ -551,11 +599,12 @@ class Builder:
         sources = self.project_sources(unit, with_main=True) if unit.project else sorted(unit.exercise_dir.glob("*.c"))
         sources += self.linked_sources(unit, sources)
         flags = self.flags_for(unit)
+        local = [f for f in self.localize(flags, unit) if not f.startswith(("-l", "-L"))]
         logs, ok = [], bool(sources)
         if not sources:
             logs.append("No source file found in %s/." % unit.exercise_rel)
         for name in unit.binaries if sources else []:
-            cmd = ["gcc", *flags, "-g", "-I", str(unit.exercise_dir), *self.shared_includes(unit),
+            cmd = ["gcc", *local, "-g", "-I", str(unit.exercise_dir), *self.shared_includes(unit),
                    *[str(s) for s in sources], *[str(a) for a in self.project_archives(unit)],
                    "-o", str(unit.exercise_dir / name), *self.link_flags(unit)]
             res = run(cmd, timeout=BUILD_TIMEOUT)
@@ -566,6 +615,108 @@ class Builder:
                 break
         self.make_cache[key] = (ok, "\n".join(logs).strip(), sources)
         return self.make_cache[key]
+
+    def definitions(self):
+        """{function name: source} for every .c of the submission that may be linked with
+        another exercise's tests: no main(), no Criterion test, not in a hidden folder."""
+        if not hasattr(self, "_definitions"):
+            self._definitions = {}
+            for src in sorted(self.submission.rglob("*.c")):
+                if any(p.startswith(".") for p in src.relative_to(self.submission).parts):
+                    continue
+                text = src.read_text(errors="replace")
+                if CRITERION_RE.search(text) or MAIN_RE.search(text):
+                    continue
+                code = PREPROCESSOR_RE.sub("", strip_comments(text))
+                for match in DEFINITION_RE.finditer(code):
+                    if not re.search(r"\bstatic\b", match.group(0)):
+                        self._definitions.setdefault(match.group(1), src)
+        return self._definitions
+
+    def missing_definitions(self, sources, link_output):
+        """Other files of the submission defining the functions the link could not find: an
+        exercise may use the code of another one (e.g. list functions written earlier)."""
+        found = {}
+        for name in sorted(set(UNDEFINED_RE.findall(link_output))):
+            src = self.definitions().get(name)
+            if src is not None and src not in sources:
+                found.setdefault(src, []).append(name)
+        return found
+
+    def link_failure(self, unit, output):
+        """Explicit reason for a failed link, naming the functions."""
+        missing = sorted(set(UNDEFINED_RE.findall(output)))
+        twice = sorted(set(MULTIPLE_RE.findall(output)))
+        if missing and self.validation:
+            return ("Link failed: no empty implementation defines %s. Remouline generates them from the "
+                    "prototypes of the headers under headers/ and of the test file %s: declare %s in one of them."
+                    % (", ".join(missing), unit.rel, "them" if len(missing) > 1 else "it"))
+        if missing:
+            return ("Link failed: the tests call %s, defined nowhere in your code: check the name and the "
+                    "prototype against the subject." % ", ".join(missing))
+        if twice:
+            return "Link failed: %s is defined more than once." % ", ".join(twice)
+        return "Link failed: a function required by the tests is missing or has the wrong name/signature."
+
+    def headers_named(self, name, unit):
+        """Headers of the submission matching an #include "name", closest to the exercise first."""
+        target = Path(name)
+        found = [h for h in self.submission.rglob(target.name) if h.is_file()
+                 and not any(p.startswith(".") for p in h.relative_to(self.submission).parts)
+                 and str(h).endswith("/" + str(target).lstrip("./"))]
+        base = (unit.exercise_dir or self.submission).relative_to(self.submission).parts
+
+        def closeness(h):
+            parts = h.relative_to(self.submission).parts
+            common = 0
+            while common < min(len(parts), len(base)) and parts[common] == base[common]:
+                common += 1
+            return (-common, str(h))
+        return sorted(found, key=closeness)
+
+    def header_folder(self, unit, output, include_dirs):
+        """The test file includes a header that is in the submission but not on the include path
+        (e.g. a shared header of a sibling exercise): the folder to add, or None."""
+        match = MISSING_HEADER_RE.search(output)
+        if not match:
+            return None
+        for header in self.headers_named(match.group(1), unit):
+            folder = header.parent
+            for _ in Path(match.group(1)).parts[:-1]:
+                folder = folder.parent
+            if folder not in include_dirs:
+                return folder
+        return None
+
+    def unreachable_header(self, unit, output):
+        """Explicit reason when the user's code includes a header that exists in the submission
+        but not on the include path given by the assignment's flags."""
+        match = MISSING_HEADER_RE.search(output)
+        if not match:
+            return None
+        found = self.headers_named(match.group(1), unit)
+        if not found:
+            return None
+        folder = found[0].parent.relative_to(self.submission)
+        if self.validation:
+            return ('The headers put "%s" in %s/, which is not on the include path: the students\' code '
+                    'includes it like the tests do. If the subject compiles with "-I %s/", add it to the '
+                    'default flags in remouline/flags.txt; otherwise put the header where the subject does.'
+                    % (match.group(1), folder, folder))
+        return ('"%s" is in %s/, which is not on the include path with the assignment\'s flags (%s): '
+                "put it where the subject asks." % (match.group(1), folder, " ".join(self.flags_for(unit)) or "none"))
+
+    def missing_header(self, unit, output):
+        """Explicit reason when a test file includes a header found nowhere."""
+        match = MISSING_HEADER_RE.search(output)
+        if not match:
+            return None
+        own = "/".join(x for x in [unit.rel_dir, unit.exercise] if x)
+        if self.validation:
+            return ('The test file %s includes "%s", but no header of that name is given under headers/ '
+                    "(e.g. headers/%s/%s, or where the subject puts it)." % (unit.rel, match.group(1), own, match.group(1)))
+        return 'The tests include "%s", which is missing from your submission (expected in %s/ or where the subject puts it).' % (
+            match.group(1), own)
 
     def link(self, unit, objects, test_obj, variant):
         out = self.build_root / ("bin-%s-%s" % (re.sub(r"[^A-Za-z0-9]+", "_", unit.rel), variant))
@@ -578,8 +729,15 @@ class Builder:
     def build(self, unit):
         """Returns dict(ok, test_error, log, binaries={'asan','plain'}, student_sources)."""
         if unit.exercise_dir is None:
-            return {"ok": False, "log": "Exercise folder not found in your submission: %s" % (unit.rel_dir or "."),
-                    "reason": "Exercise folder not found."}
+            own = "/".join(x for x in [unit.rel_dir, unit.exercise] if x)
+            expected = "%s/ (or %s/%s.c)" % (own, unit.rel_dir, unit.exercise) if unit.rel_dir else "%s/" % own
+            if self.validation:
+                reason = ("No empty implementation was generated for %s (expected in %s): give the exercise's "
+                          "header under headers/%s/ or headers/%s/, include it from the test file, or declare the "
+                          "prototypes the tests call in the test file." % (unit.rel, expected, own, unit.rel_dir or "."))
+            else:
+                reason = "Exercise folder not found: expected %s in your submission." % expected
+            return {"ok": False, "log": reason, "reason": reason}
         include_dirs = [unit.exercise_dir, unit.test_file.parent]
         if (self.submission / "include").is_dir():
             include_dirs.append(self.submission / "include")
@@ -587,6 +745,7 @@ class Builder:
             include_dirs.append(self.submission / unit.rel_dir)
         if unit.project:
             include_dirs += self.project_header_dirs(unit)
+        include_dirs += [d for d in self.flag_include_dirs(unit) if d not in include_dirs]
         logs = []
 
         if unit.mode == "makefile":
@@ -621,8 +780,9 @@ class Builder:
                 if index == 0:
                     logs.append(text)
                 if not ok:
-                    reason = ("Compilation failed (%s)." % " ".join(self.flags_for(unit))
-                              if index == 0 else "Compilation with sanitizers failed.")
+                    reason = self.unreachable_header(unit, text) or (
+                        "Compilation failed (%s)." % " ".join(self.flags_for(unit))
+                        if index == 0 else "Compilation with sanitizers failed.")
                     return {"ok": False, "log": "\n".join(logs), "reason": reason}
                 objects[variant] = objs
             student_sources = sources
@@ -630,20 +790,43 @@ class Builder:
         binaries = {}
         for variant in self.variants(unit):
             ok, test_obj, output = self.compile_test_object(unit, variant, include_dirs)
+            for _ in range(5):
+                folder = None if ok else self.header_folder(unit, output, include_dirs)
+                if folder is None:
+                    break
+                include_dirs.append(folder)
+                ok, test_obj, output = self.compile_test_object(unit, variant, include_dirs)
             if not ok:
+                header = self.missing_header(unit, output)
                 if self.validation:
                     # The assignment's own headers are used: the test file itself is wrong.
-                    return {"ok": True, "log": "\n".join(logs), "test_error": "The test file %s does not "
-                            "compile against the assignment's headers.\n\n%s" % (unit.rel, output)}
+                    return {"ok": True, "log": "\n".join(logs), "test_error": "%s\n\n%s" % (
+                        header or "The test file %s does not compile against the assignment's headers." % unit.rel,
+                        output)}
                 logs.append("$ compile the tests of %s\n%s" % (unit.rel, output))
                 return {"ok": False, "log": "\n".join(logs),
-                        "reason": "The tests do not compile with your headers: check that their names, "
-                                  "prototypes, structures and types match the subject."}
+                        "reason": header or "The tests do not compile with your headers: check that their names, "
+                                            "prototypes, structures and types match the subject."}
             ok, binary, output = self.link(unit, objects[variant], test_obj, variant)
+            for _ in range(3 if unit.mode == "functions" and not ok else 0):
+                # Functions of another exercise used by these tests: link the files defining them.
+                found = self.missing_definitions(student_sources, output)
+                if not found:
+                    break
+                logs.append("Also compiling code of other exercises used by the tests: %s" % "; ".join(
+                    "%s (%s)" % (src.relative_to(self.submission), ", ".join(names)) for src, names in found.items()))
+                student_sources = student_sources + list(found)
+                for v in self.variants(unit):
+                    compiled, objs, text = self.compile_objects(unit, student_sources, v)
+                    if not compiled:
+                        logs.append(text)
+                        return {"ok": False, "log": "\n".join(logs),
+                                "reason": "Compilation failed (%s)." % " ".join(self.flags_for(unit))}
+                    objects[v] = objs
+                ok, binary, output = self.link(unit, objects[variant], test_obj, variant)
             if not ok:
                 logs.append("$ link with %s\n%s" % (unit.rel, output))
-                return {"ok": False, "log": "\n".join(logs),
-                        "reason": "Link failed: a function required by the tests is missing or has the wrong name/signature."}
+                return {"ok": False, "log": "\n".join(logs), "reason": self.link_failure(unit, output)}
             binaries[variant] = binary
         return {"ok": True, "log": "\n".join(logs), "binaries": binaries, "student_sources": student_sources}
 

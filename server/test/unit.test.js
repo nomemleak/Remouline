@@ -6,7 +6,7 @@ import path from 'node:path';
 import { findTests, categoryPartsForTestFile, previewTests } from '../src/criterion-parser.js';
 import { resolveSlug, safeRelativePath, isValidSlug } from '../src/assignments.js';
 import { hashToken } from '../src/tokens.js';
-import { parsePrototypes, stubDefinition, binariesUsed, functionsDefinedIn, generateStubSubmission } from '../src/stubs.js';
+import { parsePrototypes, stubDefinition, binariesUsed, functionsDefinedIn, generateStubSubmission, testPreamble, resolveIncludes } from '../src/stubs.js';
 import { parseFlagsFile, parseFlagList, pipelineConfig, freezeConfig, publishedConfig, draftFlagsDiffer, storedOverrides } from '../src/flags.js';
 import { judge } from '../src/validation.js';
 
@@ -211,4 +211,87 @@ test('publication freezes the validated flags and the test list', () => {
   assert.deepEqual(publishedConfig(edited).default_flags, ['-Wall']);
   assert.equal(draftFlagsDiffer(edited), true);
   assert.deepEqual(publishedConfig(draft), pipelineConfig(draft), 'published before snapshots existed');
+});
+
+test('flags: folder options keep their folder, written joined or separated', () => {
+  assert.deepEqual(parseFlagList('-std=c99 -Wall -I includes/'), ['-std=c99', '-Wall', '-Iincludes']);
+  assert.deepEqual(parseFlagList('-Iincludes/ -I ./inc -iquote lib/include -D _GNU_SOURCE'), ['-Iincludes', '-Iinc', '-iquotelib/include', '-D_GNU_SOURCE']);
+  assert.equal(parseFlagsFile('default: -Wall -I includes/').defaultFlags, '-Wall -Iincludes');
+  assert.throws(() => parseFlagList('-I ../outside'), /relative to the assignment folder/);
+  assert.throws(() => parseFlagList('-I /usr/include'), /relative to the assignment folder/);
+  assert.throws(() => parseFlagList('-Wall includes/'), /"includes\/" is not a compilation flag/);
+});
+
+test('includes are resolved next to the test, then by name in a shared folder', () => {
+  const headers = ['includes/records.h', 'Fundamentals/robots/robots.h', 'Other/records.h'];
+  const found = resolveIncludes('#include "records.h"\n#include "../robots/robots.h"\n#include "nope.h"', 'Fundamentals/robots/x', headers);
+  assert.equal(found.get('records.h'), 'includes/records.h');
+  assert.equal(found.get('../robots/robots.h'), 'Fundamentals/robots/robots.h');
+  assert.ok(!found.has('nope.h'));
+  assert.equal(resolveIncludes('#include "records.h"', 'Other', headers).get('records.h'), 'Other/records.h');
+});
+
+test('test preamble keeps includes and type definitions, never functions or variables', () => {
+  const src = `#include <criterion/criterion.h>
+#include <stdlib.h>
+#include "records.h"
+#include "test_only.h"
+#define LEN 8 /* comment */
+typedef struct person { char name[LEN]; int age; } person_t;
+struct pair { int a; int b; };
+struct pair g_pair = { 1, 2 };
+static int counter = 0;
+static void helper(void) { counter += 1; }
+double average_age(const person_t *people, size_t n);
+Test(average_age, two) { cr_assert(1, "}; struct fake { int x; };"); }
+`;
+  const out = testPreamble(src, (name) => (name === 'records.h' ? 'records.h' : null));
+  assert.equal(out, [
+    '#include <stdlib.h>', '#include "records.h"', '#define LEN 8',
+    'typedef struct person { char name[LEN]; int age; } person_t;', 'struct pair { int a; int b; };',
+  ].join('\n'));
+});
+
+test('empty implementation from a shared includes/ folder and from prototypes declared by the tests', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stub-shared-'));
+  const write = (rel, content) => {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), content);
+  };
+  write('headers/includes/records.h', '#include <stddef.h>\nstruct node { int v; struct node *next; };\n'
+    + 'struct node *list_push(struct node *h, int v);\nsize_t list_size(const struct node *h);\nvoid list_free(struct node *h);');
+  write('tests/Fundamentals/records/test_basics.c', '#include "records.h"\nTest(list_push, one) { list_push(NULL, 1); }');
+  // Maintenance exercise: the function is declared by the test only, list_push comes from basics.
+  write('tests/Fundamentals/maintenance/test_asan_list.c', '#include <criterion/criterion.h>\n#include <string.h>\n#include "records.h"\n'
+    + 'int list_sum(struct node **head);\nchar *strdup(const char *s);\n'
+    + 'Test(list_sum, three) { struct node *n = list_push(NULL, 3); cr_assert(list_sum(&n) == 3); }');
+  const out = path.join(dir, 'stub');
+  const { notes, voidFunctions } = generateStubSubmission(path.join(dir, 'tests'), path.join(dir, 'headers'), out);
+  const basics = fs.readFileSync(path.join(out, 'Fundamentals/records/basics.c'), 'utf8');
+  assert.match(basics, /#include "records.h"/, 'included like the students\' code: through -I includes/');
+  for (const name of ['list_push', 'list_size', 'list_free']) assert.match(basics, new RegExp(`${name}\\(`));
+  const asan = fs.readFileSync(path.join(out, 'Fundamentals/maintenance/asan_list.c'), 'utf8');
+  assert.match(asan, /int list_sum\(struct node \*\*head\)/);
+  assert.doesNotMatch(asan, /strdup\(/, 'standard library functions are never redefined');
+  assert.equal(asan.split('#include "records.h"').length - 1, 1);
+  assert.ok(notes.every((n) => !/no header found/.test(n)));
+  assert.deepEqual(voidFunctions, ['list_free']);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a function only a shared header declares is defined by the exercise whose tests call it', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stub-orphan-'));
+  const write = (rel, content) => {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), content);
+  };
+  write('headers/Fundamentals/robots/robots.h', 'int robot_power(int x);');
+  write('headers/includes/utils.h', 'int clamp(int x);');
+  write('tests/Fundamentals/robots/test_robots.c', '#include "robots.h"\n#include "utils.h"\nTest(robot_power, a) { robot_power(clamp(1)); }');
+  const out = path.join(dir, 'stub');
+  generateStubSubmission(path.join(dir, 'tests'), path.join(dir, 'headers'), out);
+  const stub = fs.readFileSync(path.join(out, 'Fundamentals/robots/robots_stub.c'), 'utf8');
+  assert.match(stub, /int robot_power\(int x\)/);
+  assert.match(stub, /#include "utils.h"[\s\S]*int clamp\(int x\)/);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
