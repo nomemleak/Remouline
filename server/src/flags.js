@@ -17,15 +17,42 @@ import { config } from './config.js';
 const FLAG_RE = /^-[A-Za-z0-9_=+.,:-]+$/;
 // Flags that could redirect output, load code or change the toolchain are refused.
 const FORBIDDEN = /^-(o|B|wrapper|fplugin|specs|x|E|S|c|M)/;
+// Folder options, written "-I includes/" or "-Iincludes/": the folder is relative to the
+// assignment folder (runner/pipeline.py resolves it inside the submission).
+const PATH_OPTIONS = ['-iquote', '-isystem', '-I', '-L'];
+// Options whose value may also be given as a separate word ("-D NAME=1").
+const VALUE_OPTIONS = ['-D', '-U'];
+const FOLDER_RE = /^[A-Za-z0-9_.+-]+(\/[A-Za-z0-9_.+-]+)*\/?$/;
 const KEY_RE = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
 export const MAKEFILE = 'makefile';
 
 const fail = (message) => Object.assign(new Error(message), { status: 400 });
 
+function folderFlag(option, folder) {
+  const clean = folder.replace(/^\.\//, '');
+  if (!FOLDER_RE.test(clean) || clean.split('/').includes('..')) {
+    throw fail(`Invalid folder for ${option}: ${folder} (a folder relative to the assignment folder is expected, e.g. ${option} includes/).`);
+  }
+  return `${option}${clean.replace(/\/$/, '') || '.'}`;
+}
+
 export function parseFlagList(text) {
-  const flags = String(text ?? '').trim().split(/\s+/).filter(Boolean);
-  for (const f of flags) {
+  const words = String(text ?? '').trim().split(/\s+/).filter(Boolean);
+  const flags = [];
+  for (let i = 0; i < words.length; i += 1) {
+    const word = words[i];
+    const pathOption = PATH_OPTIONS.find((o) => word.startsWith(o));
+    const separate = (word === pathOption || VALUE_OPTIONS.includes(word)) && i + 1 < words.length && !words[i + 1].startsWith('-');
+    if (pathOption) {
+      flags.push(folderFlag(pathOption, separate ? words[(i += 1)] : word.slice(pathOption.length)));
+      continue;
+    }
+    const f = separate ? `${word}${words[(i += 1)]}` : word;
+    if (!f.startsWith('-')) {
+      throw fail(`"${f}" is not a compilation flag: a value must follow the option it belongs to (e.g. "-I includes/", "-D NAME=1").`);
+    }
     if (!FLAG_RE.test(f) || FORBIDDEN.test(f)) throw fail(`Invalid or forbidden compilation flag: ${f}`);
+    flags.push(f);
   }
   if (flags.length > 40) throw fail('Too many compilation flags.');
   return flags;

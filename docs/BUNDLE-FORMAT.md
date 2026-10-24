@@ -29,6 +29,19 @@ Programs/shout/test_shout.c                      runs ./shout, compiled from the
 headers/Fundamentals/count_chars/count_chars.h   header users write in Fundamentals/count_chars/
 ```
 
+**Shared header folder.** When the assignment keeps its headers in one folder and compiles with
+it on the include path (e.g. `includes/` with `-I includes/`), put them there and keep the flag:
+
+```
+headers/includes/records.h                       header users write in includes/
+Fundamentals/records/test_basics.c               #include "records.h"
+remouline/flags.txt                              default: ... -I includes/
+```
+
+The tests and the empty implementations find a header by the name they include, wherever it is
+under `headers/`; users' code only finds it through the flags, as with the real grading. Without
+the flag, validation says which header is out of reach and which flag to add.
+
 **Project layout.** When an assignment part is a project folder (with `src/` and/or `include/`,
 often a `Makefile`) tested module by module, put the test files directly in that folder:
 
@@ -99,6 +112,9 @@ fundamentals: makefile
   compile commands `make -n` prints (`-I`, `-o`, `-l` and sanitizer options are handled by the
   pipeline). One line per folder that has a Makefile; `default:` always holds flags. **Without
   such a line, a Makefile found in a submission is never run**;
+- `-I <folder>` (also `-iquote`, `-isystem`, `-L`), written `-I includes/` or `-Iincludes/`: a
+  folder relative to the assignment folder (also looked up in the exercise folder); the tests use
+  the same include path. `-D NAME=1` may also be written with a space;
 - `#` starts a comment. Each key appears once. Flags that could redirect output or load code
   (`-o`, `-B`, `-fplugin`...) are refused. Libraries (`-l*`, `-pthread`) are passed at link time;
   `-lm` is always added.
@@ -119,6 +135,12 @@ declare, or a wrong pointer/integer type, is an error.
 - Tests create every data file they need themselves (`fopen`/`fwrite` in the test or a fixture) and
   clean up; they run with the exercise folder as working directory.
 - Programs are run as `./<binary>` (e.g. with `popen`) and checked on their output and exit code.
+- A function the assignment gives without a header (e.g. a buggy function to fix in a debugging
+  exercise) is declared in the test file itself, after its `#include` lines: the empty
+  implementations define it, with the includes, macros and types of the test file.
+- An exercise may call the functions of another one (a list built with the functions of an
+  earlier exercise): when a function is missing at link time, the file of the submission that
+  defines it is compiled and linked too, and the build log says so.
 - If the assignment lets users call a helper function provided with the tests, define it (non-static)
   in the test file: the empty implementations never redefine functions defined by the tests.
 
