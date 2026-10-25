@@ -295,3 +295,12 @@ test('a function only a shared header declares is defined by the exercise whose 
   assert.match(stub, /#include "utils.h"[\s\S]*int clamp\(int x\)/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('a suite checking a type of the headers (enum values) only warns', () => {
+  const build = { category_path: 'Build/Fundamentals', test_name: 'robots', status: 'pass' };
+  const leaf = { category_path: 'Testsuite/Fundamentals/robots/robot_type', test_name: 'enum_values', status: 'pass' };
+  const verdict = judge([build, leaf], [build, leaf], { typeNames: ['robot', 'robot_type'] });
+  assert.deepEqual(verdict.blocking, []);
+  assert.match(verdict.warnings[0], /robot_type: checks the declarations/);
+  assert.equal(judge([build, leaf], [build, leaf]).blocking.length, 1);
+});

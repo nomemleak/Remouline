@@ -22,14 +22,14 @@ export function canValidate(slug) {
 
 export async function startValidation(slug) {
   const d = dirs(slug);
-  const { notes, voidFunctions } = generateStubSubmission(d.staging, d.headers, d.stub, 'zero');
+  const { notes, voidFunctions, typeNames } = generateStubSubmission(d.staging, d.headers, d.stub, 'zero');
   generateStubSubmission(d.staging, d.headers, d.stubOther, 'other');
   const insert = db().prepare(
     `INSERT INTO submissions (kind, student, assignment, validation_role, status) VALUES ('validation', ?, ?, ?, 'queued')`,
   );
   const stubId = Number(insert.run(REFERENCE_STUDENT, slug, 'stub').lastInsertRowid);
   const otherId = Number(insert.run(REFERENCE_STUDENT, slug, 'stub_other').lastInsertRowid);
-  const report = { stubSubmissionId: stubId, otherSubmissionId: otherId, startedAt: now(), stubNotes: notes, voidFunctions };
+  const report = { stubSubmissionId: stubId, otherSubmissionId: otherId, startedAt: now(), stubNotes: notes, voidFunctions, typeNames };
   db()
     .prepare("UPDATE assignments SET validation_status = 'running', validation_report = ? WHERE slug = ?")
     .run(JSON.stringify(report), slug);
@@ -49,9 +49,12 @@ export function exerciseKey(leaf) {
  * Pure verdict from the two runs (exported for unit tests). `voidFunctions`: suites
  * named after a void function (free_*, destroy_*...) cannot fail on empty code (doing
  * nothing is only visible as a leak, found by the memory check on student runs): warning only.
+ * `typeNames`: suites named after a type of the headers (e.g. "robot_type" checking enum values)
+ * test declarations, which the empty implementations share: warning only.
  */
-export function judge(zeroResults, otherResults, { voidFunctions = [] } = {}) {
+export function judge(zeroResults, otherResults, { voidFunctions = [], typeNames = [] } = {}) {
   const voids = new Set(voidFunctions);
+  const types = new Set(typeNames);
   const blocking = [];
   const warnings = [];
   const tests = zeroResults.filter((l) => l.category_path.startsWith('Testsuite'));
@@ -86,6 +89,8 @@ export function judge(zeroResults, otherResults, { voidFunctions = [] } = {}) {
     const suiteName = suite.slice(suite.lastIndexOf('/') + 1);
     if (vacuous.length === leaves.length && voids.has(suiteName)) {
       warnings.push(`${suite.replace(/^Testsuite\//, '')}: void function, cannot fail on empty code (leaks are found by the memory check on student runs).`);
+    } else if (vacuous.length === leaves.length && types.has(suiteName)) {
+      warnings.push(`${suite.replace(/^Testsuite\//, '')}: checks the declarations of the headers (a type), which empty code shares: it cannot fail here, but does on a student's wrong header.`);
     } else if (vacuous.length === leaves.length) {
       blocking.push(`No test of ${suite.replace(/^Testsuite\//, '')} fails on either empty implementation (0/NULL or non-zero): they check nothing.`);
     } else {
@@ -110,7 +115,7 @@ export function evaluateValidation(slug) {
   if (failedRun) {
     verdict = { blocking: [`A validation run could not be graded (${failedRun.status}): ${failedRun.message || 'see the job log'}`], warnings: [] };
   } else {
-    verdict = judge(getResults(zero.id), getResults(other.id), { voidFunctions: report.voidFunctions });
+    verdict = judge(getResults(zero.id), getResults(other.id), { voidFunctions: report.voidFunctions, typeNames: report.typeNames });
   }
   const status = verdict.blocking.length === 0 ? 'passed' : 'failed';
   const final = { ...report, finishedAt: now(), status, ...verdict };

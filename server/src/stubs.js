@@ -290,7 +290,7 @@ function write(root, rel, content) {
  * @param {string} headersDir  headers given with the tests (paths mirror the assignment)
  * @param {string} outDir      folder to (re)create with the empty implementation
  * @param {'zero'|'other'} variant
- * @returns {{ notes: string[], voidFunctions: string[] }}
+ * @returns {{ notes: string[], voidFunctions: string[], typeNames: string[] }}
  */
 export function generateStubSubmission(testsDir, headersDir, outDir, variant = 'zero') {
   fs.rmSync(outDir, { recursive: true, force: true });
@@ -417,5 +417,13 @@ export function generateStubSubmission(testsDir, headersDir, outDir, variant = '
     write(outDir, target, stubSource(target, entry, variant));
     notes.push(`${target}: ${entry.protos.size} empty function(s)`);
   }
-  return { notes, voidFunctions: [...voidFunctions].sort() };
+  // Types the headers declare (struct/union/enum tags, typedef names): a suite named after one
+  // checks the declarations themselves (e.g. enum values), which empty code cannot fail.
+  const typeNames = new Set();
+  for (const text of [...headerText.values(), ...sources.values()]) {
+    const code = stripNoise(text);
+    for (const m of code.matchAll(/\b(?:struct|union|enum)\s+([A-Za-z_]\w*)/g)) typeNames.add(m[1]);
+    for (const m of stripBraces(code).matchAll(/\btypedef\b[^;]*?\b([A-Za-z_]\w*)\s*;/g)) typeNames.add(m[1]);
+  }
+  return { notes, voidFunctions: [...voidFunctions].sort(), typeNames: [...typeNames].sort() };
 }
