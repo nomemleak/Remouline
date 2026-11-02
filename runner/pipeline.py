@@ -250,18 +250,65 @@ def binaries_used(test_source):
     return sorted({m for m in BIN_RE.findall(test_source) if not DATA_EXT_RE.search(m)})
 
 
+def ignored(parts):
+    """Hidden folders and CMake's generated CMakeFiles/ (a build folder committed by mistake)."""
+    return any(p.startswith(".") or p == "CMakeFiles" for p in parts)
+
+
+def module_file(folder, exercise, exercises):
+    """<exercise>.c in a module subfolder of a project, next to its header (e.g.
+    game_logic/cannon.c + game_logic/cannon.h), not in a hidden folder nor in the folder of
+    another exercise tested from the same folder."""
+    for src in sorted(folder.rglob(exercise + ".c")):
+        parts = src.relative_to(folder).parts[:-1]
+        if (parts and not ignored(parts) and parts[0] not in exercises
+                and any(src.parent.glob("*.h"))):
+            return src
+    return None
+
+
+def is_project(folder, exercises, modules=True):
+    """A folder holding test files directly (one per module) is built as ONE project, every .c
+    under it, when one of those tests has no exercise folder or file of its own: the project
+    has src/ or include/ (fundamentals/src/, fundamentals/include/), or keeps that module in a
+    subfolder of its own (proficiencies/game_logic/cannon.c, with `modules`). Its other tests
+    (e.g. a module in proficiencies/game_state/game_state.c) then belong to the same project."""
+    if not folder.is_dir():
+        return False
+    layout = (folder / "src").is_dir() or (folder / "include").is_dir()
+    for exercise in sorted(exercises):
+        if exercise == folder.name or (folder / exercise).is_dir() or (folder / (exercise + ".c")).exists():
+            continue
+        if layout or (modules and module_file(folder, exercise, exercises) is not None):
+            return True
+    return False
+
+
 class Unit:
     """One test file + the exercise it targets."""
 
-    def __init__(self, tests_root, submission, rel, makefile_keys=()):
+    def __init__(self, tests_root, submission, rel, makefile_keys=(), exercises=()):
+        """`exercises`: exercise names of every test file in the same folder as this one."""
         self.rel = rel
         self.test_file = tests_root / rel
         self.parts = category_parts(rel)
         self.exercise = self.parts[-1]
         rel_dir = str(Path(rel).parent).replace("\\", "/")
         self.rel_dir = "" if rel_dir == "." else rel_dir
-        # The exercise lives either in its own folder (<dir>/<exercise>/) or directly in <dir>/.
-        candidates = ["/".join(x for x in [self.rel_dir, self.exercise] if x), self.rel_dir]
+        # Project layout: the test file sits in a project folder (e.g. fundamentals/, with
+        # src/ and include/, often a Makefile or a CMakeLists.txt) and tests several of its
+        # modules, one test file per module (test_physics.c, test_records.c...): every .c of
+        # the project counts, and the project folder is the exercise folder. At the top of the
+        # submission, exercises live in folders of their own next to a shared include/: only
+        # this test's own exercise counts, and only src/ or include/ (one missing or misplaced
+        # exercise must not merge all the others into one project).
+        if self.rel_dir:
+            self.project = is_project(submission / self.rel_dir, set(exercises) | {self.exercise})
+        else:
+            self.project = is_project(submission, {self.exercise}, modules=False)
+        # Otherwise the exercise lives either in its own folder (<dir>/<exercise>/) or directly in <dir>/.
+        candidates = [self.rel_dir] if self.project else [
+            "/".join(x for x in [self.rel_dir, self.exercise] if x), self.rel_dir]
         self.exercise_dir = None
         self.exercise_rel = None
         for candidate in candidates:
@@ -271,16 +318,6 @@ class Unit:
                 self.exercise_rel = candidate or "."
                 break
         self.mode = None
-        # Project layout: the test file sits in a project folder (e.g. fundamentals/, with
-        # src/ and include/, often a Makefile) and tests several of its modules, one test
-        # file per module (test_physics.c, test_records.c...): every .c of the project counts.
-        self.project = (
-            self.exercise_dir is not None
-            and self.exercise_rel == (self.rel_dir or ".")
-            and self.exercise_dir.name != self.exercise
-            and not (self.exercise_dir / (self.exercise + ".c")).exists()
-            and ((self.exercise_dir / "src").is_dir() or (self.exercise_dir / "include").is_dir())
-        )
         # Names an assignment's flags.txt may use for this exercise, most specific first.
         self.keys = [k for k in (self.exercise_rel, "/".join(self.parts), self.exercise) if k]
         # The assignment says this folder is built with its Makefile ("<folder>: makefile").
@@ -477,7 +514,7 @@ class Builder:
     def project_header_dirs(self, unit):
         dirs = []
         for header in sorted(unit.exercise_dir.rglob("*.h")):
-            if header.parent not in dirs and not any(p.startswith(".") for p in header.relative_to(unit.exercise_dir).parts):
+            if header.parent not in dirs and not ignored(header.relative_to(unit.exercise_dir).parts):
                 dirs.append(header.parent)
             if len(dirs) >= 20:
                 break
@@ -495,7 +532,7 @@ class Builder:
         """Every .c of a project folder, except test files (and main() unless asked)."""
         sources = []
         for src in sorted(unit.exercise_dir.rglob("*.c")):
-            if any(p.startswith(".") for p in src.relative_to(unit.exercise_dir).parts):
+            if ignored(src.relative_to(unit.exercise_dir).parts):
                 continue
             text = src.read_text(errors="replace")
             if CRITERION_RE.search(text) or (not with_main and MAIN_RE.search(text)):
@@ -603,9 +640,11 @@ class Builder:
         logs, ok = [], bool(sources)
         if not sources:
             logs.append("No source file found in %s/." % unit.exercise_rel)
+        # A project's program is linked with the object files given with it, like its archives.
+        given = self.given_objects(unit.exercise_dir) if unit.project else []
         for name in unit.binaries if sources else []:
             cmd = ["gcc", *local, "-g", "-I", str(unit.exercise_dir), *self.shared_includes(unit),
-                   *[str(s) for s in sources], *[str(a) for a in self.project_archives(unit)],
+                   *[str(s) for s in sources], *[str(o) for o in given], *[str(a) for a in self.project_archives(unit)],
                    "-o", str(unit.exercise_dir / name), *self.link_flags(unit)]
             res = run(cmd, timeout=BUILD_TIMEOUT)
             shown = " ".join(str(s.relative_to(self.submission)) for s in sources)
@@ -622,7 +661,7 @@ class Builder:
         if not hasattr(self, "_definitions"):
             self._definitions = {}
             for src in sorted(self.submission.rglob("*.c")):
-                if any(p.startswith(".") for p in src.relative_to(self.submission).parts):
+                if ignored(src.relative_to(self.submission).parts):
                     continue
                 text = src.read_text(errors="replace")
                 if CRITERION_RE.search(text) or MAIN_RE.search(text):
@@ -641,6 +680,44 @@ class Builder:
             src = self.definitions().get(name)
             if src is not None and src not in sources:
                 found.setdefault(src, []).append(name)
+        return found
+
+    def given_objects(self, folder=None):
+        """Object files given with the assignment and committed with the code (e.g.
+        display/display.o, delivered without its source): not in a hidden folder, not a build
+        output (no .c of the same name next to it, not CMake's CMakeFiles/ or *.c.o)."""
+        folder = folder or self.submission
+        found = []
+        for obj in sorted(folder.rglob("*.o")):
+            parts = obj.relative_to(self.submission).parts
+            if (ignored(parts) or obj.stem.endswith(".c")
+                    or obj.with_suffix(".c").exists() or not obj.is_file()):
+                continue
+            found.append(obj)
+        return found
+
+    def object_definitions(self):
+        """{function name: object file} for the given object files of the submission (nm)."""
+        if not hasattr(self, "_object_definitions"):
+            self._object_definitions = {}
+            for obj in self.given_objects():
+                res = run(["nm", "-P", "--defined-only", "-g", str(obj)], timeout=BUILD_TIMEOUT)
+                if res["code"] != 0:
+                    continue
+                for line in (res["output"] or "").splitlines():
+                    fields = line.split()
+                    if len(fields) >= 2 and fields[1] in ("T", "D", "B", "R") and IDENT_RE.match(fields[0]):
+                        self._object_definitions.setdefault(fields[0], obj)
+        return self._object_definitions
+
+    def missing_objects(self, given, link_output):
+        """Given object files defining functions the link could not find, when no source file of
+        the submission defines them (e.g. display functions of display/display.o)."""
+        found = {}
+        for name in sorted(set(UNDEFINED_RE.findall(link_output))):
+            obj = self.object_definitions().get(name)
+            if obj is not None and obj not in given and name not in self.definitions():
+                found.setdefault(obj, []).append(name)
         return found
 
     def link_failure(self, unit, output):
@@ -718,12 +795,13 @@ class Builder:
         return 'The tests include "%s", which is missing from your submission (expected in %s/ or where the subject puts it).' % (
             match.group(1), own)
 
-    def link(self, unit, objects, test_obj, variant):
+    def link(self, unit, objects, test_obj, variant, given=()):
+        """`given`: object files given with the assignment that the tests need (missing_objects)."""
         out = self.build_root / ("bin-%s-%s" % (re.sub(r"[^A-Za-z0-9]+", "_", unit.rel), variant))
         extra = ASAN_FLAGS if variant == "asan" else []
         archives = [str(a) for a in self.project_archives(unit)]
-        res = run(["gcc", *extra, *[str(o) for o in objects], str(test_obj), *archives, "-o", str(out), "-lcriterion",
-                   *self.link_flags(unit)], timeout=BUILD_TIMEOUT)
+        res = run(["gcc", *extra, *[str(o) for o in objects], *[str(o) for o in given], str(test_obj), *archives,
+                   "-o", str(out), "-lcriterion", *self.link_flags(unit)], timeout=BUILD_TIMEOUT)
         return res["code"] == 0, out, res["output"] or ""
 
     def build(self, unit):
@@ -788,6 +866,7 @@ class Builder:
             student_sources = sources
 
         binaries = {}
+        given = []
         for variant in self.variants(unit):
             ok, test_obj, output = self.compile_test_object(unit, variant, include_dirs)
             for _ in range(5):
@@ -807,23 +886,30 @@ class Builder:
                 return {"ok": False, "log": "\n".join(logs),
                         "reason": header or "The tests do not compile with your headers: check that their names, "
                                             "prototypes, structures and types match the subject."}
-            ok, binary, output = self.link(unit, objects[variant], test_obj, variant)
-            for _ in range(3 if unit.mode == "functions" and not ok else 0):
-                # Functions of another exercise used by these tests: link the files defining them.
+            ok, binary, output = self.link(unit, objects[variant], test_obj, variant, given)
+            for _ in range(4 if unit.mode == "functions" and not ok else 0):
+                # Functions of another exercise used by these tests: link the files defining them,
+                # then the object files given with the assignment (which may need more of them).
                 found = self.missing_definitions(student_sources, output)
-                if not found:
+                given_found = self.missing_objects(given, output)
+                if not found and not given_found:
                     break
-                logs.append("Also compiling code of other exercises used by the tests: %s" % "; ".join(
-                    "%s (%s)" % (src.relative_to(self.submission), ", ".join(names)) for src, names in found.items()))
-                student_sources = student_sources + list(found)
-                for v in self.variants(unit):
-                    compiled, objs, text = self.compile_objects(unit, student_sources, v)
-                    if not compiled:
-                        logs.append(text)
-                        return {"ok": False, "log": "\n".join(logs),
-                                "reason": "Compilation failed (%s)." % " ".join(self.flags_for(unit))}
-                    objects[v] = objs
-                ok, binary, output = self.link(unit, objects[variant], test_obj, variant)
+                if found:
+                    logs.append("Also compiling code of other exercises used by the tests: %s" % "; ".join(
+                        "%s (%s)" % (src.relative_to(self.submission), ", ".join(names)) for src, names in found.items()))
+                    student_sources = student_sources + list(found)
+                    for v in self.variants(unit):
+                        compiled, objs, text = self.compile_objects(unit, student_sources, v)
+                        if not compiled:
+                            logs.append(text)
+                            return {"ok": False, "log": "\n".join(logs),
+                                    "reason": "Compilation failed (%s)." % " ".join(self.flags_for(unit))}
+                        objects[v] = objs
+                if given_found:
+                    logs.append("Also linking object files given with the assignment: %s" % "; ".join(
+                        "%s (%s)" % (obj.relative_to(self.submission), ", ".join(names)) for obj, names in given_found.items()))
+                    given = given + list(given_found)
+                ok, binary, output = self.link(unit, objects[variant], test_obj, variant, given)
             if not ok:
                 logs.append("$ link with %s\n%s" % (unit.rel, output))
                 return {"ok": False, "log": "\n".join(logs), "reason": self.link_failure(unit, output)}
@@ -1070,7 +1156,12 @@ def main():
     for category_path, test_name in config.get("tests") or []:
         prefix, _, suite = category_path.rpartition("/")
         known_tests.setdefault(prefix, []).append((suite, test_name))
-    units = [Unit(tests_root, submission, rel, makefile_keys) for rel in test_files]
+    # Exercises tested from each folder: a project's tests decide together (is_project).
+    exercises = {}
+    for rel in test_files:
+        exercises.setdefault(str(Path(rel).parent), set()).add(category_parts(rel)[-1])
+    units = [Unit(tests_root, submission, rel, makefile_keys, exercises[str(Path(rel).parent)])
+             for rel in test_files]
     leak_sanitizer = not args.validation and leak_sanitizer_works(build_root)
     if not args.validation:
         print("memory check: %s" % ("LeakSanitizer (valgrind for programs)" if leak_sanitizer

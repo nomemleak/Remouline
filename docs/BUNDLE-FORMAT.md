@@ -59,6 +59,24 @@ working directory (so `data/...` paths work). Validation builds one empty implem
 whole project. If the assignment provides the project's `Makefile`, add `<project>: makefile` to the
 flags.
 
+A project may also keep each module in a subfolder of its own, next to its header, without `src/`
+or `include/` (e.g. a CMake project), and use another project of the assignment:
+
+```
+Proficiencies/test_cannon.c                      tests Proficiencies/game_logic/cannon.c (+ cannon.h)
+Proficiencies/test_game_state.c                  same project: Proficiencies/game_state/game_state.c
+headers/Proficiencies/game_logic/cannon.h        headers users write in each module folder
+headers/Proficiencies/game_state/game_state.h
+remouline/flags.txt                              Proficiencies: ... -I Fundamentals/include/
+```
+
+As soon as one test file of the folder targets a module in such a subfolder, all the test files of
+the folder test the same project (here `game_state/` is a module, not an exercise folder). Functions
+the project uses from another one (e.g. `init_airship` of `Fundamentals/src/airship.c`) are compiled
+in from that project, and object files given with the assignment (`display/display.o`, committed
+by users) are linked when the tests need a function only they define. The include path of the other
+project is written from the assignment folder, never with `..` (see below).
+
 ## Single document
 
 Paste it in *Tests & publishing*, or upload it as one `.txt` file. Every file starts with a marker
@@ -114,7 +132,10 @@ fundamentals: makefile
   such a line, a Makefile found in a submission is never run**;
 - `-I <folder>` (also `-iquote`, `-isystem`, `-L`), written `-I includes/` or `-Iincludes/`: a
   folder relative to the assignment folder (also looked up in the exercise folder); the tests use
-  the same include path. `-D NAME=1` may also be written with a space;
+  the same include path. `..` is refused: a folder of another part of the assignment is written
+  from the assignment folder, even when the subject's `CMakeLists.txt` or `Makefile` reaches it
+  from the exercise folder (`../Fundamentals/include` there → `-I Fundamentals/include/` here).
+  `-D NAME=1` may also be written with a space;
 - `#` starts a comment. Each key appears once. Flags that could redirect output or load code
   (`-o`, `-B`, `-fplugin`...) are refused. Libraries (`-l*`, `-pthread`) are passed at link time;
   `-lm` is always added.

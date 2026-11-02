@@ -30,7 +30,15 @@ const fail = (message) => Object.assign(new Error(message), { status: 400 });
 
 function folderFlag(option, folder) {
   const clean = folder.replace(/^\.\//, '');
-  if (!FOLDER_RE.test(clean) || clean.split('/').includes('..')) {
+  const parts = clean.split('/');
+  if (parts.includes('..') && FOLDER_RE.test(clean)) {
+    // e.g. "-I ../Fundamentals/include/" copied from a subject's CMakeLists.txt or Makefile, which
+    // runs from an exercise folder: here every folder is written from the assignment folder.
+    const fromRoot = parts.filter((p) => p !== '..' && p !== '.').join('/');
+    throw fail(`Invalid folder for ${option}: ${folder} (a folder relative to the assignment folder is expected, `
+      + `without "..": write the path from the assignment folder${fromRoot ? `, e.g. ${option} ${fromRoot}` : ''}).`);
+  }
+  if (!FOLDER_RE.test(clean)) {
     throw fail(`Invalid folder for ${option}: ${folder} (a folder relative to the assignment folder is expected, e.g. ${option} includes/).`);
   }
   return `${option}${clean.replace(/\/$/, '') || '.'}`;
