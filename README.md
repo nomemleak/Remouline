@@ -200,6 +200,7 @@ Fundamentals/test_address_book.c                    -> Fundamentals/address_book
 Fundamentals/preflight_check/test_preflight_check.c -> exercise folder Fundamentals/preflight_check/
 Programs/shout/test_shout.c                         -> program exercise: tests run ./shout
 fundamentals/test_physics.c                         -> project folder fundamentals/ (src/, include/, Makefile)
+proficiencies/test_cannon.c                         -> project proficiencies/, module game_logic/cannon.c (+ .h)
 ```
 
 - The exercise name is the file name without `test_` / `_test`. The result tree path is
@@ -208,7 +209,10 @@ fundamentals/test_physics.c                         -> project folder fundamenta
   the flags say `<folder>: makefile`. Otherwise → unit tests linked with the user's sources.
 - Project folders (`src/`, `include/`, often a `Makefile`) tested module by module: every `.c` of the
   project except `main()` is linked with each test file, along with the project's precompiled
-  libraries (`lib/*.a`), with every header folder on the include path.
+  libraries (`lib/*.a`), with every header folder on the include path. A project may also keep its
+  modules in subfolders (`game_logic/cannon.c` + `cannon.h`, no `src/`): when one test file of a folder
+  targets such a module, every test file of that folder tests the project. Object files given with the
+  assignment (`display/display.o`, no `.c` next to them) are linked when the tests need them.
 - A header including another exercise's header (`#include "../fleet/fleet.h"`) pulls that folder's
   `.c` files into the build. A top-level `include/` folder is on every include path.
 - Helper functions a testsuite provides to users are defined in the test files and never redefined

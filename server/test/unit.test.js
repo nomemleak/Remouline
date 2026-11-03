@@ -180,6 +180,36 @@ test('project layout: one empty implementation for the whole project', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('project with modules in subfolders: one empty implementation for all its tests', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stub-modules-'));
+  const write = (rel, content) => {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), content);
+  };
+  // proficiencies/game_logic/cannon.h, proficiencies/game_state/game_state.h, proficiencies/game/game.h
+  write('headers/fundamentals/include/airship.h', 'struct airship { int fuel; };\nstruct airship *init_airship(int fuel);');
+  write('headers/proficiencies/game_logic/cannon.h', '#include "airship.h"\nint shoot(struct airship *ship);');
+  write('headers/proficiencies/game_state/game_state.h', '#include "airship.h"\nint game_init(void);');
+  write('headers/proficiencies/game/game.h', 'int play_game(void);');
+  write('tests/fundamentals/test_airship.c', '#include "airship.h"\nTest(init_airship, simple) {}');
+  write('tests/proficiencies/test_cannon.c', '#include "cannon.h"\nTest(shoot, simple) {}');
+  write('tests/proficiencies/test_game_state.c', '#include "game_state.h"\nTest(game_init, simple) {}');
+  write('tests/proficiencies/test_game.c', '#include "game.h"\nTest(play_game, simple) {}');
+  const out = path.join(dir, 'stub');
+  generateStubSubmission(path.join(dir, 'tests'), path.join(dir, 'headers'), out);
+  const stub = fs.readFileSync(path.join(out, 'proficiencies/src/remouline_stub.c'), 'utf8');
+  for (const name of ['shoot', 'game_init', 'play_game']) assert.equal(stub.split(`${name}(`).length - 1, 1, `${name} defined once`);
+  assert.ok(!stub.includes('init_airship('), 'the fundamentals project defines init_airship');
+  assert.ok(!fs.existsSync(path.join(out, 'proficiencies/game_state/game_state_stub.c')), 'no second definition per module');
+  assert.ok(!fs.existsSync(path.join(out, 'proficiencies/game/game_stub.c')), 'no second definition per module');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('flags: ".." is refused with the path to write instead', () => {
+  assert.throws(() => parseFlagList('-I ../Fundamentals/include/'), /without "\.\.".*e\.g\. -I Fundamentals\/include/);
+  assert.deepEqual(parseFlagList('-I display/ -I Fundamentals/include/'), ['-Idisplay', '-IFundamentals/include']);
+});
+
 test('flags: "makefile" marks folders built with their own Makefile', () => {
   const parsed = parseFlagsFile('default: -Wall -Wextra\nfundamentals: makefile\nproficiencies: Makefile\nfile_io: -Wall');
   assert.equal(parsed.overrides, 'fundamentals: makefile\nproficiencies: makefile\nfile_io: -Wall');

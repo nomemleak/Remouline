@@ -327,13 +327,32 @@ export function generateStubSubmission(testsDir, headersDir, outDir, variant = '
   };
   const testStubs = [];
   const done = new Set();
-  for (const rel of testFiles) {
-    const source = sources.get(rel);
+  const layout = (rel) => {
     const parts = rel.split('/');
     const exercise = exerciseNameFromFile(parts.pop());
     const relDir = parts.join('/');
     const inOwnFolder = parts[parts.length - 1] === exercise;
     const folder = inOwnFolder ? relDir : [relDir, exercise].filter(Boolean).join('/');
+    const folderHeaders = headers.filter((h) => path.posix.dirname(h) === folder);
+    const useFolder = inOwnFolder || folderHeaders.length > 0;
+    const scope = headers.filter((h) => path.posix.dirname(h) === ((useFolder ? folder : relDir) || '.'));
+    const projectHeaders = relDir ? headers.filter((h) => h.startsWith(`${relDir}/`)) : [];
+    return { exercise, relDir, inOwnFolder, folder, useFolder, scope, projectHeaders };
+  };
+  // Project folders (runner/pipeline.py is_project): a folder whose test files include one with
+  // no exercise folder nor header of its own, but headers under the folder. Its other tests
+  // (e.g. proficiencies/test_game_state.c with headers in proficiencies/game_state/) use the
+  // same project implementation: the pipeline builds every .c of the project together.
+  const projectDirs = new Set();
+  for (const rel of testFiles) {
+    const l = layout(rel);
+    if (binariesUsed(sources.get(rel)).length === 0 && l.relDir && !l.useFolder && l.scope.length === 0
+      && l.projectHeaders.length > 0) projectDirs.add(l.relDir);
+  }
+  for (const rel of testFiles) {
+    const source = sources.get(rel);
+    const { exercise, relDir, inOwnFolder, folder, useFolder, scope, projectHeaders } = layout(rel);
+    const inProject = projectDirs.has(relDir) && !inOwnFolder;
 
     const binaries = binariesUsed(source);
     if (binaries.length > 0) {
@@ -347,17 +366,11 @@ export function generateStubSubmission(testsDir, headersDir, outDir, variant = '
     }
 
     // Function exercise: headers in the exercise folder, else in the category folder.
-    const folderHeaders = headers.filter((h) => path.posix.dirname(h) === folder);
-    const useFolder = inOwnFolder || folderHeaders.length > 0;
-    const targetDir = useFolder ? folder : relDir;
-    const scope = headers.filter((h) => path.posix.dirname(h) === (targetDir || '.'));
-
     // Project layout (e.g. fundamentals/include/*.h, one test file per module): ONE empty
     // implementation for the whole project, built from every header under it.
-    const projectHeaders = relDir ? headers.filter((h) => h.startsWith(`${relDir}/`)) : [];
     let target;
     let own = scope;
-    if (!useFolder && scope.length === 0 && projectHeaders.length > 0) {
+    if (inProject) {
       target = `${relDir}/src/remouline_stub.c`;
       own = projectHeaders;
     } else {
