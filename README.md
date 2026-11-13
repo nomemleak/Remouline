@@ -377,3 +377,7 @@ with `filter: brightness(0) invert(1)`. Favicons come from `logo-mark.png` only
 ## License
 
 [MIT](LICENSE). The name of an instance is a single setting (`APP_NAME`).
+
+---
+
+AI assistance was used, in an ethical and supervised way, to help write this project; every decision and the final result remain under human responsibility.
